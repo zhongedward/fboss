@@ -15,6 +15,7 @@
 #include "fboss/agent/FbossHwUpdateError.h"
 #include "fboss/agent/Utils.h"
 #include "fboss/agent/gen-cpp2/switch_config_types.h"
+#include "fboss/agent/if/gen-cpp2/common_types.h"
 #include "fboss/agent/rib/ConfigApplier.h"
 #include "fboss/agent/rib/NetworkToRouteMap.h"
 #include "fboss/agent/state/FibDeltaHelpers.h"
@@ -68,6 +69,23 @@ class RibIpRouteUpdate {
     } else {
       ++stats.v6RoutesAdded;
     }
+
+    if (route.namedRouteDestination().has_value()) {
+      const auto& namedDest = *route.namedRouteDestination();
+      if (namedDest.getType() == NamedRouteDestination::Type::nextHopGroup) {
+        const auto& nhgName = *namedDest.nextHopGroup_ref();
+        if (!route.nextHops()->empty()) {
+          throw FbossError(
+              "Route cannot specify both nextHops and namedRouteDestination");
+        }
+        auto adminDistance = route.adminDistance().value_or(distance);
+        RouteNextHopEntry entry(
+            RouteForwardAction::NEXTHOPS, adminDistance, counterID, classID);
+        entry.setNamedNextHopGroup(nhgName);
+        return RibRoute{{network, mask}, entry};
+      }
+    }
+
     return RibRoute{
         {network, mask},
         RouteNextHopEntry::from(route, distance, counterID, classID)};
@@ -439,6 +457,54 @@ void RibRouteTables::update(
   updateRib(
       routerID,
       [&](auto& routeTable, auto* mySidTable, auto* nextHopIDManager) {
+        // Resolve named NHG references to actual nexthops (IP routes only)
+        auto resolvedRoutes = toAddRoutes;
+        if constexpr (std::is_same_v<RouteType, RibRouteUpdater::RouteEntry>) {
+          if (nextHopIDManager) {
+            for (auto& routeEntry : resolvedRoutes) {
+              auto nhgName = routeEntry.nhopEntry.getNamedNextHopGroup();
+              if (!nhgName.has_value()) {
+                continue;
+              }
+              auto nhopsOpt = nextHopIDManager->getNextHopsForName(*nhgName);
+              if (!nhopsOpt.has_value()) {
+                throw FbossError(
+                    "Named next-hop group '", *nhgName, "' does not exist");
+              }
+              auto cleanupOldNhg = [&](const auto& existingRoute) {
+                auto oldEntry = existingRoute->getEntryForClient(clientID);
+                if (!oldEntry) {
+                  return;
+                }
+                auto oldNhg = oldEntry->getNamedNextHopGroup();
+                if (!oldNhg.has_value() || *oldNhg == *nhgName) {
+                  return;
+                }
+                if (existingRoute->numClientsForNamedNhg(*oldNhg) <= 1) {
+                  nextHopIDManager->removeRouteForNamedNhg(
+                      *oldNhg, routerID, routeEntry.prefix);
+                }
+              };
+              if (routeEntry.prefix.first.isV4()) {
+                auto it = routeTable.v4NetworkToRoute.exactMatch(
+                    routeEntry.prefix.first.asV4(), routeEntry.prefix.second);
+                if (it != routeTable.v4NetworkToRoute.end()) {
+                  cleanupOldNhg(it->value());
+                }
+              } else {
+                auto it = routeTable.v6NetworkToRoute.exactMatch(
+                    routeEntry.prefix.first.asV6(), routeEntry.prefix.second);
+                if (it != routeTable.v6NetworkToRoute.end()) {
+                  cleanupOldNhg(it->value());
+                }
+              }
+
+              routeEntry.nhopEntry.setNextHops(*nhopsOpt);
+              nextHopIDManager->addRouteForNamedNhg(
+                  *nhgName, routerID, routeEntry.prefix);
+            }
+          }
+        }
         RibRouteUpdater updater(
             &(routeTable.v4NetworkToRoute),
             &(routeTable.v6NetworkToRoute),
@@ -446,7 +512,7 @@ void RibRouteTables::update(
             nextHopIDManager,
             mySidTable);
         updater.update(
-            clientID, toAddRoutes, toDelPrefixes, resetClientsRoutes);
+            clientID, resolvedRoutes, toDelPrefixes, resetClientsRoutes);
       });
   updateFib(resolver, routerID, ribToSwitchStateFunc, cookie);
 }

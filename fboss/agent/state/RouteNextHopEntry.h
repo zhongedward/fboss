@@ -90,6 +90,7 @@ class RouteNextHopEntry
   }
 
   NextHopSet getNextHopSet() const;
+  void setNextHops(const NextHopSet& nhops);
 
   const std::optional<RouteCounterID> getCounterID() const {
     if (auto counter = safe_cref<switch_state_tags::counterID>()) {
