@@ -1523,8 +1523,18 @@ void RoutingInformationBase::addOrUpdateNamedNextHopGroups(
 void RoutingInformationBase::deleteNamedNextHopGroups(
     const std::vector<std::string>& names,
     const std::function<void(const NextHopIDManager*)>& stateUpdateFn) {
-  updateStateInRibThread(
-      [&]() { ribTables_.deleteNamedNextHopGroups(names, stateUpdateFn); });
+  ensureRunning();
+  std::exception_ptr exceptionPtr;
+  ribUpdateEventBase_.runInFbossEventBaseThreadAndWait([&]() {
+    try {
+      ribTables_.deleteNamedNextHopGroups(names, stateUpdateFn);
+    } catch (const std::exception&) {
+      exceptionPtr = std::current_exception();
+    }
+  });
+  if (exceptionPtr) {
+    std::rethrow_exception(exceptionPtr);
+  }
 }
 
 state::RouteTableFields RibRouteTables::VrfRouteTable::toThrift() const {

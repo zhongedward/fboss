@@ -477,4 +477,69 @@ TEST_F(NamedNextHopGroupRibTest, SyncFibCleansUpNamedNhgMapping) {
   EXPECT_FALSE(managerCopy->hasRoutesForNamedNhg("nhg2"));
 }
 
+TEST_F(NamedNextHopGroupRibTest, DeleteNhgWithRouteReferenceBlocked) {
+  auto rib = sw_->getRib();
+
+  std::vector<std::pair<std::string, RouteNextHopSet>> groups;
+  groups.emplace_back("nhg1", makeResolvedNextHops({"1.1.1.10"}));
+  rib->addOrUpdateNamedNextHopGroups(groups, [](const NextHopIDManager*) {});
+
+  // Add route referencing nhg1
+  {
+    UnicastRoute route;
+    route.dest()->ip() =
+        facebook::network::toBinaryAddress(folly::IPAddress("10.0.0.0"));
+    route.dest()->prefixLength() = 24;
+    NamedRouteDestination namedDest;
+    namedDest.nextHopGroup_ref() = "nhg1";
+    route.namedRouteDestination() = namedDest;
+    auto updater = sw_->getRouteUpdater();
+    updater.addRoute(RouterID(0), ClientID::BGPD, route);
+    updater.program();
+  }
+
+  // Deleting nhg1 should fail
+  EXPECT_THROW(
+      rib->deleteNamedNextHopGroups({"nhg1"}, [](const NextHopIDManager*) {}),
+      FbossError);
+
+  // nhg1 should still exist
+  auto managerCopy = rib->getNextHopIDManagerCopy();
+  EXPECT_TRUE(managerCopy->hasNamedNextHopGroup("nhg1"));
+}
+
+TEST_F(NamedNextHopGroupRibTest, DeleteNhgAfterRouteRemovedSucceeds) {
+  auto rib = sw_->getRib();
+
+  std::vector<std::pair<std::string, RouteNextHopSet>> groups;
+  groups.emplace_back("nhg1", makeResolvedNextHops({"1.1.1.10"}));
+  rib->addOrUpdateNamedNextHopGroups(groups, [](const NextHopIDManager*) {});
+
+  // Add and then delete a route referencing nhg1
+  {
+    UnicastRoute route;
+    route.dest()->ip() =
+        facebook::network::toBinaryAddress(folly::IPAddress("10.0.0.0"));
+    route.dest()->prefixLength() = 24;
+    NamedRouteDestination namedDest;
+    namedDest.nextHopGroup_ref() = "nhg1";
+    route.namedRouteDestination() = namedDest;
+    auto updater = sw_->getRouteUpdater();
+    updater.addRoute(RouterID(0), ClientID::BGPD, route);
+    updater.program();
+  }
+  {
+    auto updater = sw_->getRouteUpdater();
+    updater.delRoute(
+        RouterID(0), folly::IPAddress("10.0.0.0"), 24, ClientID::BGPD);
+    updater.program();
+  }
+
+  // Now deletion should succeed
+  rib->deleteNamedNextHopGroups({"nhg1"}, [](const NextHopIDManager*) {});
+
+  auto managerCopy = rib->getNextHopIDManagerCopy();
+  EXPECT_FALSE(managerCopy->hasNamedNextHopGroup("nhg1"));
+}
+
 } // namespace facebook::fboss
