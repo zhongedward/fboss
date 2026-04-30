@@ -24,6 +24,7 @@
 #include "fboss/agent/state/Route.h"
 
 #include <algorithm>
+#include <type_traits>
 #include "fboss/agent/Utils.h"
 #include "fboss/agent/state/RouteNextHopEntry.h"
 #include "fboss/agent/state/RouteTypes.h"
@@ -84,11 +85,13 @@ RibRouteUpdater::RibRouteUpdater(
     IPv4NetworkToRouteMap* v4Routes,
     IPv6NetworkToRouteMap* v6Routes,
     NextHopIDManager* nextHopIDManager,
-    MySidTable* mySidTable)
+    MySidTable* mySidTable,
+    RouterID routerID)
     : v4Routes_(v4Routes),
       v6Routes_(v6Routes),
       nextHopIDManager_(nextHopIDManager),
       mySidTable_(mySidTable),
+      routerID_(routerID),
       weightNormalizer_(
           FLAGS_nsf_num_racks_per_pod,
           FLAGS_nsf_num_parallel_rack_links,
@@ -101,12 +104,14 @@ RibRouteUpdater::RibRouteUpdater(
     IPv6NetworkToRouteMap* v6Routes,
     LabelToRouteMap* mplsRoutes,
     NextHopIDManager* nextHopIDManager,
-    MySidTable* mySidTable)
+    MySidTable* mySidTable,
+    RouterID routerID)
     : v4Routes_(v4Routes),
       v6Routes_(v6Routes),
       mplsRoutes_(mplsRoutes),
       nextHopIDManager_(nextHopIDManager),
       mySidTable_(mySidTable),
+      routerID_(routerID),
       weightNormalizer_(
           FLAGS_nsf_num_racks_per_pod,
           FLAGS_nsf_num_parallel_rack_links,
@@ -236,6 +241,25 @@ void RibRouteUpdater::addOrReplaceRoute(
 }
 
 template <typename AddressT>
+void RibRouteUpdater::maybeRemoveNamedNhgMapping(
+    const std::shared_ptr<Route<AddressT>>& route,
+    const RouteNextHopEntry& clientEntry) {
+  if constexpr (!std::is_same_v<AddressT, LabelID>) {
+    if (!nextHopIDManager_) {
+      return;
+    }
+    auto nhgName = clientEntry.getNamedNextHopGroup();
+    if (!nhgName.has_value()) {
+      return;
+    }
+    if (route->numClientsForNamedNhg(*nhgName) <= 1) {
+      nextHopIDManager_->removeRouteForNamedNhg(
+          *nhgName, routerID_, route->prefix().toCidrNetwork());
+    }
+  }
+}
+
+template <typename AddressT>
 void RibRouteUpdater::delRouteImpl(
     const Prefix<AddressT>& prefix,
     NetworkToRouteMap<AddressT>* routes,
@@ -252,6 +276,7 @@ void RibRouteUpdater::delRouteImpl(
   if (!clientNhopEntry) {
     return;
   }
+  maybeRemoveNamedNhgMapping(route, *clientNhopEntry);
   if (route->numClientEntries() == 1) {
     // If this client's the only entry, simply erase
     XLOG(DBG3) << "Deleting route: " << route->str();
@@ -328,6 +353,7 @@ void RibRouteUpdater::removeAllRoutesFromClientImpl(
     if (!nhopEntry) {
       continue;
     }
+    maybeRemoveNamedNhgMapping(route, *nhopEntry);
     if (route->numClientEntries() == 1) {
       // This client's is the only entry avoid unnecessary cloning
       // we are going to prune the route anyways
@@ -364,6 +390,7 @@ void RibRouteUpdater::removeAllUnclaimedRoutesFromClientImpl(
     if (!nhopEntry) {
       continue;
     }
+    maybeRemoveNamedNhgMapping(route, *nhopEntry);
     if (route->numClientEntries() == 1) {
       // This client's is the only entry avoid unnecessary cloning
       // we are going to prune the route anyways

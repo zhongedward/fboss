@@ -510,7 +510,8 @@ void RibRouteTables::update(
             &(routeTable.v6NetworkToRoute),
             &(routeTable.labelToRoute),
             nextHopIDManager,
-            mySidTable);
+            mySidTable,
+            routerID);
         updater.update(
             clientID, resolvedRoutes, toDelPrefixes, resetClientsRoutes);
       });
