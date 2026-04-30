@@ -391,11 +391,7 @@ int Fboss2IntegrationTest::getKernelInterfaceMtu(int vlanId) const {
 
 } // namespace facebook::fboss
 
-#ifdef IS_OSS
-FOLLY_INIT_LOGGING_CONFIG("DBG2; default:async=true");
-#else
 FOLLY_INIT_LOGGING_CONFIG("fboss=DBG2; default:async=true");
-#endif
 
 int main(int argc, char* argv[]) {
   // Initialize gtest first so it consumes --gtest_* flags before folly::init

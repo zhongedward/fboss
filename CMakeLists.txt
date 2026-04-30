@@ -1056,6 +1056,18 @@ find_package(tabulate CONFIG REQUIRED)
 
 # Unit Testing
 add_definitions (-DIS_OSS=true)
+
+# Strip build directory prefixes from __FILE__ so folly's LoggerDB resolves
+# log categories like "fboss=DBG2" correctly in OSS builds. Without this,
+# __FILE__ is an absolute path and the "fboss" category is never matched.
+set_property(
+  DIRECTORY
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  APPEND
+  PROPERTY
+  COMPILE_DEFINITIONS
+  "FOLLY_XLOG_STRIP_PREFIXES=\"${CMAKE_SOURCE_DIR}:${CMAKE_BINARY_DIR}\""
+)
 find_package(Threads REQUIRED)
 enable_testing()
 
