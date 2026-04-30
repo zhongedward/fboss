@@ -324,6 +324,9 @@ ServiceHandler::ServiceHandler(
         tcData().setCounter(
             kWatchdogThreadHeartbeatMissed,
             watchdogThreadHeartbeatMissedCount_);
+        // Surface liveness loss for OSS vendors without fb303/ODS.
+        XLOG(ERR) << "FSDB storage thread heartbeat missed (count="
+                  << watchdogThreadHeartbeatMissedCount_ << ")";
       });
   heartbeatWatchdog_->startMonitoringHeartbeat(
       operStorage_.getThreadHeartbeat());
