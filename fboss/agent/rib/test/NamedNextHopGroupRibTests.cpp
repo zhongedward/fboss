@@ -382,4 +382,99 @@ TEST_F(NamedNextHopGroupRibTest, ReAddRouteWithDifferentNamedNhg) {
       1);
 }
 
+TEST_F(NamedNextHopGroupRibTest, DeleteRouteWithNamedNhgCleansUpMapping) {
+  auto rib = sw_->getRib();
+
+  std::vector<std::pair<std::string, RouteNextHopSet>> groups;
+  groups.emplace_back("nhg1", makeResolvedNextHops({"1.1.1.10"}));
+  rib->addOrUpdateNamedNextHopGroups(groups, [](const NextHopIDManager*) {});
+
+  // Add route with named NHG
+  {
+    UnicastRoute route;
+    route.dest()->ip() =
+        facebook::network::toBinaryAddress(folly::IPAddress("10.0.0.0"));
+    route.dest()->prefixLength() = 24;
+    NamedRouteDestination namedDest;
+    namedDest.nextHopGroup_ref() = "nhg1";
+    route.namedRouteDestination() = namedDest;
+    auto updater = sw_->getRouteUpdater();
+    updater.addRoute(RouterID(0), ClientID::BGPD, route);
+    updater.program();
+  }
+
+  auto managerCopy = rib->getNextHopIDManagerCopy();
+  EXPECT_TRUE(managerCopy->hasRoutesForNamedNhg("nhg1"));
+
+  // Delete the route
+  {
+    auto updater = sw_->getRouteUpdater();
+    updater.delRoute(
+        RouterID(0), folly::IPAddress("10.0.0.0"), 24, ClientID::BGPD);
+    updater.program();
+  }
+
+  managerCopy = rib->getNextHopIDManagerCopy();
+  EXPECT_FALSE(managerCopy->hasRoutesForNamedNhg("nhg1"));
+}
+
+TEST_F(NamedNextHopGroupRibTest, SyncFibCleansUpNamedNhgMapping) {
+  auto rib = sw_->getRib();
+
+  std::vector<std::pair<std::string, RouteNextHopSet>> groups;
+  groups.emplace_back("nhg1", makeResolvedNextHops({"1.1.1.10"}));
+  groups.emplace_back("nhg2", makeResolvedNextHops({"2.2.2.10"}));
+  rib->addOrUpdateNamedNextHopGroups(groups, [](const NextHopIDManager*) {});
+
+  // Add two routes with named NHGs
+  {
+    UnicastRoute route1;
+    route1.dest()->ip() =
+        facebook::network::toBinaryAddress(folly::IPAddress("10.0.0.0"));
+    route1.dest()->prefixLength() = 24;
+    NamedRouteDestination namedDest1;
+    namedDest1.nextHopGroup_ref() = "nhg1";
+    route1.namedRouteDestination() = namedDest1;
+
+    UnicastRoute route2;
+    route2.dest()->ip() =
+        facebook::network::toBinaryAddress(folly::IPAddress("10.1.0.0"));
+    route2.dest()->prefixLength() = 24;
+    NamedRouteDestination namedDest2;
+    namedDest2.nextHopGroup_ref() = "nhg2";
+    route2.namedRouteDestination() = namedDest2;
+
+    auto updater = sw_->getRouteUpdater();
+    updater.addRoute(RouterID(0), ClientID::BGPD, route1);
+    updater.addRoute(RouterID(0), ClientID::BGPD, route2);
+    updater.program();
+  }
+
+  auto managerCopy = rib->getNextHopIDManagerCopy();
+  EXPECT_TRUE(managerCopy->hasRoutesForNamedNhg("nhg1"));
+  EXPECT_TRUE(managerCopy->hasRoutesForNamedNhg("nhg2"));
+
+  // syncFib with only route1 — route2 should be cleaned up
+  {
+    UnicastRoute route1;
+    route1.dest()->ip() =
+        facebook::network::toBinaryAddress(folly::IPAddress("10.0.0.0"));
+    route1.dest()->prefixLength() = 24;
+    NamedRouteDestination namedDest1;
+    namedDest1.nextHopGroup_ref() = "nhg1";
+    route1.namedRouteDestination() = namedDest1;
+
+    auto updater = sw_->getRouteUpdater();
+    updater.addRoute(RouterID(0), ClientID::BGPD, route1);
+    RouteUpdateWrapper::SyncFibInfo syncInfo;
+    syncInfo.ridAndClients.insert({RouterID(0), ClientID::BGPD});
+    syncInfo.type = RouteUpdateWrapper::SyncFibInfo::SyncFibType::IP_ONLY;
+    updater.program(syncInfo);
+  }
+
+  managerCopy = rib->getNextHopIDManagerCopy();
+  EXPECT_TRUE(managerCopy->hasRoutesForNamedNhg("nhg1"));
+  EXPECT_FALSE(managerCopy->hasRoutesForNamedNhg("nhg2"));
+}
+
 } // namespace facebook::fboss
