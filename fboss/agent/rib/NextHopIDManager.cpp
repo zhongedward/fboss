@@ -332,6 +332,13 @@ NextHopIDManager::deallocateNamedNextHopGroup(const std::string& name) {
         "Cannot deallocate non-existent named next-hop group: ", name);
   }
 
+  if (hasRoutesForNamedNhg(name)) {
+    throw FbossError(
+        "Cannot delete named next-hop group '",
+        name,
+        "' because it is referenced by routes");
+  }
+
   auto setIdIt = nameToNextHopSetID_.find(name);
   CHECK(setIdIt != nameToNextHopSetID_.end())
       << "Named next-hop group " << name
