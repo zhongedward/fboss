@@ -98,7 +98,9 @@ class AgentMirroringTest : public AgentHwTest {
     std::vector<uint8_t> payload(payloadSize, 0xff);
     auto trafficPort = getTrafficPort(*getAgentEnsemble());
     auto oldPacketStats = getLatestPortStats(trafficPort);
-    auto oldOutPkts = *oldPacketStats.outUnicastPkts_();
+    auto oldOutPkts = *oldPacketStats.outUnicastPkts_() +
+        *oldPacketStats.outMulticastPkts_() +
+        *oldPacketStats.outBroadcastPkts_();
     auto i = 0;
     while (i < count) {
       auto pkt = utility::makeUDPTxPacket(
