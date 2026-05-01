@@ -193,12 +193,9 @@ TEST_F(NextHopIDManagerTest, getOrAllocateNextHopID) {
   NextHop nh3 =
       makeResolvedNextHop(InterfaceID(1), "10.0.0.3", UCMP_DEFAULT_WEIGHT);
 
-  auto iter1 = manager_->getOrAllocateNextHopID(nh1);
-  auto id1 = iter1->second.id;
-  auto iter2 = manager_->getOrAllocateNextHopID(nh2);
-  auto id2 = iter2->second.id;
-  auto iter3 = manager_->getOrAllocateNextHopID(nh3);
-  auto id3 = iter3->second.id;
+  auto id1 = manager_->getOrAllocateNextHopID(nh1)->second;
+  auto id2 = manager_->getOrAllocateNextHopID(nh2)->second;
+  auto id3 = manager_->getOrAllocateNextHopID(nh3)->second;
 
   EXPECT_EQ(id1, NextHopID(1));
   EXPECT_EQ(id2, NextHopID(2));
@@ -214,8 +211,7 @@ TEST_F(NextHopIDManagerTest, getOrAllocateNextHopID) {
 
   // Test reusing existing ID
 
-  auto iter4 = manager_->getOrAllocateNextHopID(nh1);
-  auto id4 = iter4->second.id;
+  auto id4 = manager_->getOrAllocateNextHopID(nh1)->second;
   EXPECT_EQ(id1, id4);
   EXPECT_EQ(manager_->getIdToNextHop().size(), 3);
   EXPECT_EQ(manager_->getIdToNextHop().at(id4).nextHop, nh1);
@@ -241,12 +237,9 @@ TEST_F(NextHopIDManagerTest, getOrAllocateNextHopSetID) {
   NextHop nh3 =
       makeResolvedNextHop(InterfaceID(1), "10.0.0.3", UCMP_DEFAULT_WEIGHT);
 
-  auto nhIter1 = manager_->getOrAllocateNextHopID(nh1);
-  auto nhID1 = nhIter1->second.id;
-  auto nhIter2 = manager_->getOrAllocateNextHopID(nh2);
-  auto nhID2 = nhIter2->second.id;
-  auto nhIter3 = manager_->getOrAllocateNextHopID(nh3);
-  auto nhID3 = nhIter3->second.id;
+  auto nhID1 = manager_->getOrAllocateNextHopID(nh1)->second;
+  auto nhID2 = manager_->getOrAllocateNextHopID(nh2)->second;
+  auto nhID3 = manager_->getOrAllocateNextHopID(nh3)->second;
 
   NextHopIDSet set1 = {nhID1};
   NextHopIDSet set2 = {nhID1, nhID2};
@@ -294,12 +287,9 @@ TEST_F(NextHopIDManagerTest, getOrAllocateNextHopSetIDOrderIndependence) {
   NextHop nh3 =
       makeResolvedNextHop(InterfaceID(1), "10.0.0.3", UCMP_DEFAULT_WEIGHT);
 
-  auto nhIter1 = manager_->getOrAllocateNextHopID(nh1);
-  auto nhID1 = nhIter1->second.id;
-  auto nhIter2 = manager_->getOrAllocateNextHopID(nh2);
-  auto nhID2 = nhIter2->second.id;
-  auto nhIter3 = manager_->getOrAllocateNextHopID(nh3);
-  auto nhID3 = nhIter3->second.id;
+  auto nhID1 = manager_->getOrAllocateNextHopID(nh1)->second;
+  auto nhID2 = manager_->getOrAllocateNextHopID(nh2)->second;
+  auto nhID3 = manager_->getOrAllocateNextHopID(nh3)->second;
 
   NextHopIDSet set1 = {nhID1, nhID2, nhID3};
   NextHopIDSet set2 = {nhID3, nhID1, nhID2};
@@ -333,11 +323,9 @@ TEST_F(NextHopIDManagerTest, decrOrDeallocateNextHop) {
 
   // allocate IDs to Nexthops
   manager_->getOrAllocateNextHopID(nh1);
-  auto iter2 = manager_->getOrAllocateNextHopID(nh2);
-  auto id2 = iter2->second.id;
+  auto id2 = manager_->getOrAllocateNextHopID(nh2)->second;
   manager_->getOrAllocateNextHopID(nh3);
-  auto iter4 = manager_->getOrAllocateNextHopID(nh1);
-  auto id4 = iter4->second.id;
+  auto id4 = manager_->getOrAllocateNextHopID(nh1)->second;
 
   // Test decrementing ref count works
   manager_->decrOrDeallocateNextHop(nh1);
@@ -350,11 +338,10 @@ TEST_F(NextHopIDManagerTest, decrOrDeallocateNextHop) {
   EXPECT_EQ(manager_->getNextHopRefCount(nh2), 0);
   EXPECT_EQ(manager_->getIdToNextHop().size(), 2);
   EXPECT_EQ(manager_->getIdToNextHop().count(id2), 0);
-  EXPECT_EQ(manager_->nextHopToIDInfo_.count(nh2), 0);
+  EXPECT_EQ(manager_->nextHopToID_.count(nh2), 0);
 
   // Test allocating new ID after deallocating continues from last ID
-  auto iter5 = manager_->getOrAllocateNextHopID(nh2);
-  auto id5 = iter5->second.id;
+  auto id5 = manager_->getOrAllocateNextHopID(nh2)->second;
   EXPECT_EQ(id5, NextHopID(4));
   EXPECT_EQ(manager_->getIdToNextHop().size(), 3);
   EXPECT_EQ(manager_->getIdToNextHop().at(id5).nextHop, nh2);
@@ -373,10 +360,8 @@ TEST_F(NextHopIDManagerTest, decrOrDeallocateNextHopByID) {
       manager_->decrOrDeallocateNextHopByID(NextHopID(999)), FbossError);
 
   // Allocate IDs
-  auto iter1 = manager_->getOrAllocateNextHopID(nh1);
-  auto id1 = iter1->second.id;
-  auto iter2 = manager_->getOrAllocateNextHopID(nh2);
-  auto id2 = iter2->second.id;
+  auto id1 = manager_->getOrAllocateNextHopID(nh1)->second;
+  auto id2 = manager_->getOrAllocateNextHopID(nh2)->second;
   manager_->getOrAllocateNextHopID(nh3);
   // Bump nh1 refcount to 2
   manager_->getOrAllocateNextHopID(nh1);
@@ -394,11 +379,10 @@ TEST_F(NextHopIDManagerTest, decrOrDeallocateNextHopByID) {
   EXPECT_EQ(manager_->getNextHopRefCount(nh2), 0);
   EXPECT_EQ(manager_->getIdToNextHop().size(), 2);
   EXPECT_EQ(manager_->getIdToNextHop().count(id2), 0);
-  EXPECT_EQ(manager_->nextHopToIDInfo_.count(nh2), 0);
+  EXPECT_EQ(manager_->nextHopToID_.count(nh2), 0);
 
   // Re-allocating after deallocation gets a new ID
-  auto iter4 = manager_->getOrAllocateNextHopID(nh2);
-  auto id4 = iter4->second.id;
+  auto id4 = manager_->getOrAllocateNextHopID(nh2)->second;
   EXPECT_EQ(id4, NextHopID(4));
   EXPECT_EQ(manager_->getIdToNextHop().at(id4).nextHop, nh2);
 }
@@ -411,12 +395,9 @@ TEST_F(NextHopIDManagerTest, decrOrDeallocateNextHopIDSet) {
   NextHop nh3 =
       makeResolvedNextHop(InterfaceID(1), "10.0.0.3", UCMP_DEFAULT_WEIGHT);
 
-  auto nhIter1 = manager_->getOrAllocateNextHopID(nh1);
-  auto nhID1 = nhIter1->second.id;
-  auto nhIter2 = manager_->getOrAllocateNextHopID(nh2);
-  auto nhID2 = nhIter2->second.id;
-  auto nhIter3 = manager_->getOrAllocateNextHopID(nh3);
-  auto nhID3 = nhIter3->second.id;
+  auto nhID1 = manager_->getOrAllocateNextHopID(nh1)->second;
+  auto nhID2 = manager_->getOrAllocateNextHopID(nh2)->second;
+  auto nhID3 = manager_->getOrAllocateNextHopID(nh3)->second;
 
   NextHopIDSet set1 = {nhID1};
   NextHopIDSet set2 = {nhID1, nhID2};
@@ -770,7 +751,7 @@ TEST_F(NextHopIDManagerTest, delOrDecrRouteNextHopSetID) {
 
   EXPECT_EQ(manager_->getIdToNextHop().size(), 3);
   EXPECT_EQ(manager_->getIdToNextHop().count(nhID4.value()), 0);
-  EXPECT_EQ(manager_->nextHopToIDInfo_.count(nh4), 0);
+  EXPECT_EQ(manager_->nextHopToID_.count(nh4), 0);
   EXPECT_EQ(manager_->getNextHopRefCount(nh2), 2);
 
   // Call delOrDecrRouteNextHopSetID on id2
@@ -1075,8 +1056,8 @@ TEST_F(NextHopIDManagerTest, reconstructFromSwitchStateMaps) {
   // Verify next available IDs are set correctly
   NextHop nh4 =
       makeResolvedNextHop(InterfaceID(1), "10.0.0.4", UCMP_DEFAULT_WEIGHT);
-  auto newNhIter = manager_->getOrAllocateNextHopID(nh4);
-  EXPECT_EQ(newNhIter->second.id, NextHopID(4));
+  auto newNhId = manager_->getOrAllocateNextHopID(nh4)->second;
+  EXPECT_EQ(newNhId, NextHopID(4));
 
   NextHopIDSet newSet = {nhId1};
   auto newSetIter = manager_->getOrAllocateNextHopSetID(newSet);
@@ -1222,8 +1203,8 @@ TEST_F(NextHopIDManagerTest, reconstructFromSwitchStateMapsMultiSwitch) {
   // Verify next available IDs are set correctly (max ID + 1)
   NextHop nh5 =
       makeResolvedNextHop(InterfaceID(1), "10.0.0.5", UCMP_DEFAULT_WEIGHT);
-  auto newNhIter = manager_->getOrAllocateNextHopID(nh5);
-  EXPECT_EQ(newNhIter->second.id, NextHopID(5)); // max was 4, so next is 5
+  auto newNhId = manager_->getOrAllocateNextHopID(nh5)->second;
+  EXPECT_EQ(newNhId, NextHopID(5)); // max was 4, so next is 5
 
   NextHopIDSet newSet = {nhId1};
   auto newSetIter = manager_->getOrAllocateNextHopSetID(newSet);
@@ -1283,14 +1264,10 @@ TEST_F(NextHopIDManagerTest, Srv6NextHopGetDistinctIDs) {
       makeResolvedNextHop(InterfaceID(1), "10.0.0.1", UCMP_DEFAULT_WEIGHT);
 
   // Allocate IDs for all nexthops
-  auto iter1 = manager_->getOrAllocateNextHopID(srv6Nh1);
-  auto id1 = iter1->second.id;
-  auto iter2 = manager_->getOrAllocateNextHopID(srv6Nh2);
-  auto id2 = iter2->second.id;
-  auto iter3 = manager_->getOrAllocateNextHopID(srv6Nh3);
-  auto id3 = iter3->second.id;
-  auto iter4 = manager_->getOrAllocateNextHopID(regularNh);
-  auto id4 = iter4->second.id;
+  auto id1 = manager_->getOrAllocateNextHopID(srv6Nh1)->second;
+  auto id2 = manager_->getOrAllocateNextHopID(srv6Nh2)->second;
+  auto id3 = manager_->getOrAllocateNextHopID(srv6Nh3)->second;
+  auto id4 = manager_->getOrAllocateNextHopID(regularNh)->second;
 
   // All should get distinct IDs since SRv6 fields differ
   EXPECT_NE(id1, id2);
@@ -1304,8 +1281,8 @@ TEST_F(NextHopIDManagerTest, Srv6NextHopGetDistinctIDs) {
   EXPECT_EQ(manager_->getIdToNextHop().size(), 4);
 
   // Re-allocating same SRv6 nexthop returns same ID
-  auto iterDup = manager_->getOrAllocateNextHopID(srv6Nh1);
-  EXPECT_EQ(iterDup->second.id, id1);
+  auto idDup = manager_->getOrAllocateNextHopID(srv6Nh1)->second;
+  EXPECT_EQ(idDup, id1);
   EXPECT_EQ(manager_->getIdToNextHop().size(), 4);
 
   // Verify idToNextHop map stores SRv6 nexthops correctly
@@ -1345,10 +1322,8 @@ TEST_F(NextHopIDManagerTest, Srv6NextHopSetID) {
       std::string("tunnel_2"));
 
   // Allocate individual NextHop IDs
-  auto nhIter1 = manager_->getOrAllocateNextHopID(srv6Nh1);
-  auto nhId1 = nhIter1->second.id;
-  auto nhIter2 = manager_->getOrAllocateNextHopID(srv6Nh2);
-  auto nhId2 = nhIter2->second.id;
+  auto nhId1 = manager_->getOrAllocateNextHopID(srv6Nh1)->second;
+  auto nhId2 = manager_->getOrAllocateNextHopID(srv6Nh2)->second;
 
   // Allocate a set containing both SRv6 nexthops
   NextHopIDSet srv6Set = {nhId1, nhId2};

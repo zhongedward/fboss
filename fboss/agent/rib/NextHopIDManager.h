@@ -42,13 +42,6 @@ namespace facebook::fboss {
  */
 class NextHopIDManager {
  public:
-  // Structure to hold ID for NextHops (maps NextHop → its assigned ID)
-  struct NextHopIDInfo {
-    NextHopID id;
-
-    NextHopIDInfo(NextHopID id_) : id(id_) {}
-  };
-
   // Structure to hold NextHop and its reference count (maps NextHopID → NextHop
   // + refcount). This enables O(1) refcount decrement by NextHopID without
   // hashing the NextHop object.
@@ -70,9 +63,9 @@ class NextHopIDManager {
         : id(id_), count(count_) {}
   };
 
-  // Type alias for the NextHop to NextHopIDInfo map iterator
-  using NextHopInfoIter =
-      std::unordered_map<NextHop, NextHopIDInfo>::const_iterator;
+  // Type alias for the NextHop to NextHopID map iterator
+  using NextHopToIDIter =
+      std::unordered_map<NextHop, NextHopID>::const_iterator;
 
   // Type alias for the NextHopIDSet to NextHopSetIDInfo map iterator
   using NextHopIdSetIter =
@@ -125,8 +118,8 @@ class NextHopIDManager {
   NextHopIDManager() = default;
 
   // Get or allocate a NextHopID for the given NextHop
-  // Returns const iterator to the NextHop -> NextHopIDInfo entry
-  NextHopInfoIter getOrAllocateNextHopID(const NextHop& nextHop);
+  // Returns const iterator to the NextHop -> NextHopID entry
+  NextHopToIDIter getOrAllocateNextHopID(const NextHop& nextHop);
 
   // Get or allocate a NextHopSetID for the given set of NextHopIDs
   // Returns const iterator to the NextHopIDSet -> NextHopSetIDInfo entry
@@ -307,8 +300,8 @@ class NextHopIDManager {
   // Allocate 2^62 - INT64_MAX IDs for NextHopIDSets.
   NextHopSetID nextAvailableNextHopSetID_{kNextHopSetIDStart};
 
-  // Mapping from NextHop to its ID and reference count
-  std::unordered_map<NextHop, NextHopIDInfo> nextHopToIDInfo_;
+  // Mapping from NextHop to its assigned NextHopID
+  std::unordered_map<NextHop, NextHopID> nextHopToID_;
 
   // Mapping from set of NextHopIDs to its NextHopSetID and reference count
   std::unordered_map<NextHopIDSet, NextHopSetIDInfo> nextHopIdSetToIDInfo_;

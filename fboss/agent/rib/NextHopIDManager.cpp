@@ -24,31 +24,26 @@ size_t hash<facebook::fboss::NextHopIDSet>::operator()(
 
 namespace facebook::fboss {
 
-NextHopIDManager::NextHopInfoIter NextHopIDManager::getOrAllocateNextHopID(
+NextHopIDManager::NextHopToIDIter NextHopIDManager::getOrAllocateNextHopID(
     const NextHop& nextHop) {
-  auto it = nextHopToIDInfo_.find(nextHop);
-  if (it != nextHopToIDInfo_.end()) {
-    // Existing NextHop found, increment reference count in idToNextHop_
-    idToNextHop_.at(it->second.id).refCount++;
+  auto it = nextHopToID_.find(nextHop);
+  if (it != nextHopToID_.end()) {
+    idToNextHop_.at(it->second).refCount++;
     return it;
   }
 
-  // New NextHop, allocate a new ID
   NextHopID newID = nextAvailableNextHopID_;
   nextAvailableNextHopID_ = NextHopID(nextAvailableNextHopID_ + 1);
 
-  // Check if the NextHopID is within the range [0, 2^62-1]
-  // This is the range assigned to NextHopID
   CHECK(static_cast<int64_t>(newID) > 0 && newID < kNextHopSetIDStart)
       << "Next Hop ID is in the range of [0, 2^62 - 1], the id space has been exhausted! It does not support wrap around!";
 
-  auto [idInfoItr, idInfoInserted] =
-      nextHopToIDInfo_.emplace(nextHop, NextHopIDInfo(newID));
-  CHECK(idInfoInserted);
-  auto [idMapItr, idMapInserted] =
+  auto [nhItr, nhInserted] = nextHopToID_.emplace(nextHop, newID);
+  CHECK(nhInserted);
+  auto [idItr, idInserted] =
       idToNextHop_.emplace(newID, NextHopEntry(nextHop, 1));
-  CHECK(idMapInserted);
-  return idInfoItr;
+  CHECK(idInserted);
+  return nhItr;
 }
 
 NextHopIDManager::NextHopIdSetIter NextHopIDManager::getOrAllocateNextHopSetID(
@@ -81,15 +76,15 @@ NextHopIDManager::NextHopIdSetIter NextHopIDManager::getOrAllocateNextHopSetID(
 }
 
 uint32_t NextHopIDManager::getNextHopRefCount(const NextHop& nextHop) {
-  auto it = nextHopToIDInfo_.find(nextHop);
-  if (it != nextHopToIDInfo_.end()) {
-    auto idIt = idToNextHop_.find(it->second.id);
+  auto it = nextHopToID_.find(nextHop);
+  if (it != nextHopToID_.end()) {
+    auto idIt = idToNextHop_.find(it->second);
     if (idIt != idToNextHop_.end()) {
       return idIt->second.refCount;
     }
     throw FbossError(
         "NextHopID ",
-        it->second.id,
+        it->second,
         " in nextHopToIDInfo_ but missing from idToNextHop_");
   }
   return 0;
@@ -105,12 +100,12 @@ uint32_t NextHopIDManager::getNextHopIDSetRefCount(
 }
 
 bool NextHopIDManager::decrOrDeallocateNextHop(const NextHop& nextHop) {
-  auto it = nextHopToIDInfo_.find(nextHop);
-  if (it == nextHopToIDInfo_.end()) {
+  auto it = nextHopToID_.find(nextHop);
+  if (it == nextHopToID_.end()) {
     throw FbossError(
         "Cannot decrement reference count or deallocate for non-existent NextHop");
   }
-  return decrOrDeallocateNextHopByID(it->second.id);
+  return decrOrDeallocateNextHopByID(it->second);
 }
 
 bool NextHopIDManager::decrOrDeallocateNextHopByID(const NextHopID& nextHopID) {
@@ -123,8 +118,8 @@ bool NextHopIDManager::decrOrDeallocateNextHopByID(const NextHopID& nextHopID) {
   CHECK_GT(idIt->second.refCount, 0);
   idIt->second.refCount--;
   if (idIt->second.refCount == 0) {
-    auto erasedInfo = nextHopToIDInfo_.erase(idIt->second.nextHop);
-    CHECK_EQ(erasedInfo, 1);
+    auto erasedNh = nextHopToID_.erase(idIt->second.nextHop);
+    CHECK_EQ(erasedNh, 1);
     idToNextHop_.erase(idIt);
     return true;
   }
@@ -162,9 +157,9 @@ std::optional<NextHopSetID> NextHopIDManager::getNextHopSetID(
 
 std::optional<NextHopID> NextHopIDManager::getNextHopID(
     const NextHop& nextHop) const {
-  auto it = nextHopToIDInfo_.find(nextHop);
-  if (it != nextHopToIDInfo_.end()) {
-    return it->second.id;
+  auto it = nextHopToID_.find(nextHop);
+  if (it != nextHopToID_.end()) {
+    return it->second;
   }
   return std::nullopt;
 }
@@ -195,9 +190,8 @@ NextHopIDManager::getOrAllocRouteNextHopSetID(
   NextHopIDSet nextHopIDSet;
   for (const auto& nextHop : nextHopSet) {
     auto nhIter = getOrAllocateNextHopID(nextHop);
-    auto nhId = nhIter->second.id;
+    auto nhId = nhIter->second;
     nextHopIDSet.insert(nhId);
-    // Check if this was a new allocation (refCount == 1 means newly allocated)
     if (idToNextHop_.at(nhId).refCount == 1) {
       result.addedNextHopIds.push_back(nhId);
     }
@@ -257,7 +251,7 @@ NextHopIDManager::NextHopUpdateResult NextHopIDManager::updateRouteNextHopSetID(
 }
 
 void NextHopIDManager::clearNhopIdManagerState() {
-  nextHopToIDInfo_.clear();
+  nextHopToID_.clear();
   idToNextHop_.clear();
   nextHopIdSetToIDInfo_.clear();
   idToNextHopIdSet_.clear();
@@ -511,12 +505,12 @@ void NextHopIDManager::reconstructFromSwitchStateMaps(
           util::fromThrift(nhNode->toThrift(), true /* allowV6NonLinkLocal */);
 
       // Update NextHop maps and refcounts
-      auto nhInfoIt = nextHopToIDInfo_.find(nextHop);
-      if (nhInfoIt == nextHopToIDInfo_.end()) {
-        nextHopToIDInfo_.emplace(nextHop, NextHopIDInfo(nextHopID));
+      auto nhIt = nextHopToID_.find(nextHop);
+      if (nhIt == nextHopToID_.end()) {
+        nextHopToID_.emplace(nextHop, nextHopID);
         idToNextHop_.emplace(nextHopID, NextHopEntry(nextHop, 1));
       } else {
-        idToNextHop_.at(nhInfoIt->second.id).refCount++;
+        idToNextHop_.at(nhIt->second).refCount++;
       }
       maxNextHopId = std::max(maxNextHopId, nextHopID);
     }
