@@ -5123,13 +5123,6 @@ shared_ptr<SwitchSettings> ThriftConfigApplier::updateSwitchSettings(
     switchSettingsChange = true;
   }
 
-  if (origSwitchSettings->getMaxRouteCounterIDs() !=
-      *cfg_->switchSettings()->maxRouteCounterIDs()) {
-    newSwitchSettings->setMaxRouteCounterIDs(
-        *cfg_->switchSettings()->maxRouteCounterIDs());
-    switchSettingsChange = true;
-  }
-
   std::vector<state::BlockedNeighbor> cfgBlockNeighbors;
   for (const auto& blockNeighbor : *cfg_->switchSettings()->blockNeighbors()) {
     state::BlockedNeighbor neighbor{};
