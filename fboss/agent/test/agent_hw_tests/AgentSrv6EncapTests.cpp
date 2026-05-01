@@ -145,20 +145,26 @@ class AgentSrv6EncapTest : public AgentHwTest {
     if (programEncapRoutes) {
       // IPv6 encap routes (v6 next hops)
       addEncapRoute<folly::CIDRNetworkV6>(
-          {kEncapRoutePrefix, kEncapRoutePrefixLen}, {{kSid0}});
+          {kEncapRoutePrefix, kEncapRoutePrefixLen}, {{kSid0}}, "kSid0");
       addEncapRoute<folly::CIDRNetworkV6>(
           {folly::IPAddressV6("2800:3::"), kEncapRoutePrefixLen},
-          {{kSid1}, {kSid2}});
+          {{kSid1}, {kSid2}},
+          "kSid1_or_kSid2");
       addEncapRoute<folly::CIDRNetworkV6>(
           {folly::IPAddressV6("2800:4::"), kEncapRoutePrefixLen},
-          {{kSid1}, {kSid2}});
+          {{kSid1}, {kSid2}},
+          "kSid1_or_kSid2");
       // IPv4 encap routes (v4 next hops)
       addEncapRoute<folly::CIDRNetworkV4>(
-          {folly::IPAddressV4("100.0.0.0"), 24}, {{kSid0}});
+          {folly::IPAddressV4("100.0.0.0"), 24}, {{kSid0}}, "kSid0");
       addEncapRoute<folly::CIDRNetworkV4>(
-          {folly::IPAddressV4("200.0.0.0"), 24}, {{kSid1}, {kSid2}});
+          {folly::IPAddressV4("200.0.0.0"), 24},
+          {{kSid1}, {kSid2}},
+          "kSid1_or_kSid2");
       addEncapRoute<folly::CIDRNetworkV4>(
-          {folly::IPAddressV4("201.0.0.0"), 24}, {{kSid1}, {kSid2}});
+          {folly::IPAddressV4("201.0.0.0"), 24},
+          {{kSid1}, {kSid2}},
+          "kSid1_or_kSid2");
     }
   }
 
@@ -230,7 +236,8 @@ class AgentSrv6EncapTest : public AgentHwTest {
   template <typename CIDRNetworkT>
   void addEncapRoute(
       const CIDRNetworkT& prefix,
-      const std::vector<std::vector<folly::IPAddressV6>>& sidLists) {
+      const std::vector<std::vector<folly::IPAddressV6>>& sidLists,
+      const std::string& counterID = "") {
     using IPAddrT = decltype(prefix.first);
     auto ecmpHelper = makeEcmpHelper<std::remove_const_t<IPAddrT>>();
     RouteNextHopSet nhops;
@@ -248,13 +255,16 @@ class AgentSrv6EncapTest : public AgentHwTest {
           TunnelType::SRV6_ENCAP,
           std::string("srv6Tunnel0")));
     }
+    std::optional<RouteCounterID> counter = counterID.empty()
+        ? std::nullopt
+        : std::optional<RouteCounterID>(counterID);
     auto routeUpdater = this->getSw()->getRouteUpdater();
     routeUpdater.addRoute(
         RouterID(0),
         prefix.first,
         prefix.second,
         ClientID::BGPD,
-        RouteNextHopEntry(nhops, AdminDistance::EBGP));
+        RouteNextHopEntry(nhops, AdminDistance::EBGP, counter));
     routeUpdater.program();
   }
 
@@ -273,12 +283,25 @@ class AgentSrv6EncapTest : public AgentHwTest {
       bool isV4 = false,
       const std::vector<folly::IPAddressV6>& expectedSids = {kSid0},
       std::optional<PortID> injectPort = std::nullopt,
-      std::optional<folly::IPAddress> dstIp = std::nullopt) {
+      std::optional<folly::IPAddress> dstIp = std::nullopt,
+      const std::string& counterID = "") {
     const auto& sids = expectedSids;
 
     std::map<PortID, int64_t> bytesBefore;
     for (auto port : egressPorts) {
       bytesBefore[port] = *this->getLatestPortStats(port).outBytes_();
+    }
+
+    int64_t counterBytesBefore = 0;
+    int64_t counterPacketsBefore = 0;
+    if (!counterID.empty()) {
+      auto hwSwitchStats = this->getHwSwitchStats();
+      auto& routeCounters = *hwSwitchStats.counterStats()->routeCounters();
+      auto it = routeCounters.find(counterID);
+      if (it != routeCounters.end()) {
+        counterBytesBefore = it->second.bytes().value_or(0);
+        counterPacketsBefore = it->second.packets().value_or(0);
+      }
     }
 
     auto intfMac =
@@ -371,19 +394,62 @@ class AgentSrv6EncapTest : public AgentHwTest {
       // for it here.
       EXPECT_EQ(*v6Payload->v6PayLoad(), *origPacket);
     }
+
+    if (!counterID.empty()) {
+      WITH_RETRIES({
+        auto hwSwitchStats = this->getHwSwitchStats();
+        auto& routeCounters = *hwSwitchStats.counterStats()->routeCounters();
+        auto it = routeCounters.find(counterID);
+        ASSERT_EVENTUALLY_TRUE(it != routeCounters.end())
+            << "Route counter " << counterID << " not found";
+        EXPECT_EVENTUALLY_GT(
+            it->second.bytes().value_or(0), counterBytesBefore);
+        EXPECT_EVENTUALLY_GT(
+            it->second.packets().value_or(0), counterPacketsBefore);
+      });
+    }
   }
 
   void verifyEncapPacketCpuAndFrontPanel(
       const std::vector<PortID>& egressPorts,
-      const std::vector<folly::IPAddressV6>& expectedSids = {kSid0}) {
+      const std::vector<folly::IPAddressV6>& expectedSids = {kSid0},
+      const std::string& counterID = "") {
     auto injectPort = findInjectPort(egressPorts);
     for (bool isV4 : {false, true}) {
       // ECN not marked
-      verifyEncapPacket(egressPorts, false, isV4, expectedSids);
-      verifyEncapPacket(egressPorts, false, isV4, expectedSids, injectPort);
+      verifyEncapPacket(
+          egressPorts,
+          false,
+          isV4,
+          expectedSids,
+          std::nullopt,
+          std::nullopt,
+          counterID);
+      verifyEncapPacket(
+          egressPorts,
+          false,
+          isV4,
+          expectedSids,
+          injectPort,
+          std::nullopt,
+          counterID);
       // ECN marked
-      verifyEncapPacket(egressPorts, true, isV4, expectedSids);
-      verifyEncapPacket(egressPorts, true, isV4, expectedSids, injectPort);
+      verifyEncapPacket(
+          egressPorts,
+          true,
+          isV4,
+          expectedSids,
+          std::nullopt,
+          std::nullopt,
+          counterID);
+      verifyEncapPacket(
+          egressPorts,
+          true,
+          isV4,
+          expectedSids,
+          injectPort,
+          std::nullopt,
+          counterID);
     }
   }
 
@@ -419,7 +485,8 @@ TYPED_TEST(AgentSrv6EncapTest, sendPacketToEncapRoute) {
   auto verify = [this]() {
     auto ecmpHelper = this->makeEcmpHelper();
     auto egressPort = this->getEgressPort(ecmpHelper.nhop(0).portDesc);
-    this->verifyEncapPacketCpuAndFrontPanel({egressPort});
+    this->verifyEncapPacketCpuAndFrontPanel(
+        {egressPort}, {this->kSid0}, "kSid0");
   };
   this->verifyAcrossWarmBoots(setup, verify);
 }
@@ -459,7 +526,8 @@ TYPED_TEST(AgentSrv6EncapTest, sendPacketToEncapRouteAfterLinkFlap) {
   auto verify = [this]() {
     auto ecmpHelper = this->makeEcmpHelper();
     auto egressPort = this->getEgressPort(ecmpHelper.nhop(0).portDesc);
-    this->verifyEncapPacketCpuAndFrontPanel({egressPort});
+    this->verifyEncapPacketCpuAndFrontPanel(
+        {egressPort}, {this->kSid0}, "kSid0");
   };
   this->verifyAcrossWarmBoots(setup, verify);
 }
@@ -500,7 +568,8 @@ TYPED_TEST(AgentSrv6EncapTest, resolveNeighborsAfterRouteProgram) {
   auto verify = [this]() {
     auto ecmpHelper = this->makeEcmpHelper();
     auto egressPort = this->getEgressPort(ecmpHelper.nhop(0).portDesc);
-    this->verifyEncapPacketCpuAndFrontPanel({egressPort});
+    this->verifyEncapPacketCpuAndFrontPanel(
+        {egressPort}, {this->kSid0}, "kSid0");
   };
   this->verifyAcrossWarmBoots(setup, verify);
 }
