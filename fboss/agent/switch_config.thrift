@@ -1961,7 +1961,7 @@ struct SwitchSettings {
    * Time to transition L2 from hit -> miss -> removed
    */
   4: i32 l2AgeTimerSeconds = 300;
-  5: i32 maxRouteCounterIDs = 0;
+  5: i32 maxRouteCounterIDs_DEPRECATED = 0;
 
   // neighbors to block egress traffic to
   6: list<Neighbor> blockNeighbors = [];

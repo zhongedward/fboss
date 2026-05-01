@@ -424,7 +424,7 @@ struct SwitchSettingsFields {
   2: bool qcmEnable = false;
   3: bool ptpTcEnable = false;
   4: i32 l2AgeTimerSeconds = 300;
-  5: i32 maxRouteCounterIDs = 0;
+  5: i32 maxRouteCounterIDs_DEPRECATED = 0;
   6: list<BlockedNeighbor> blockNeighbors;
   7: list<BlockedMacAddress> macAddrsToBlock;
   // Switch type

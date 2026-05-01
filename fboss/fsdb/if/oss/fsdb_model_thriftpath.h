@@ -9122,7 +9122,7 @@ class ChildThriftPath<::facebook::fboss::cfg::SwitchSettings, ::facebook::fboss:
 std::pair<apache::thrift::ident::qcmEnable, Child<bool, ::apache::thrift::type_class::integral, ::apache::thrift::type::bool_t>>,
 std::pair<apache::thrift::ident::ptpTcEnable, Child<bool, ::apache::thrift::type_class::integral, ::apache::thrift::type::bool_t>>,
 std::pair<apache::thrift::ident::l2AgeTimerSeconds, Child<::std::int32_t, ::apache::thrift::type_class::integral, ::apache::thrift::type::i32_t>>,
-std::pair<apache::thrift::ident::maxRouteCounterIDs, Child<::std::int32_t, ::apache::thrift::type_class::integral, ::apache::thrift::type::i32_t>>,
+std::pair<apache::thrift::ident::maxRouteCounterIDs_DEPRECATED, Child<::std::int32_t, ::apache::thrift::type_class::integral, ::apache::thrift::type::i32_t>>,
 std::pair<apache::thrift::ident::blockNeighbors, ChildThriftPath<::std::vector<::facebook::fboss::cfg::Neighbor>, ::facebook::fboss::fsdb::FsdbOperStateRoot, Self>>,
 std::pair<apache::thrift::ident::macAddrsToBlock, ChildThriftPath<::std::vector<::facebook::fboss::cfg::MacAndVlan>, ::facebook::fboss::fsdb::FsdbOperStateRoot, Self>>,
 std::pair<apache::thrift::ident::switchType, Child<::facebook::fboss::cfg::SwitchType, ::apache::thrift::type_class::enumeration, ::apache::thrift::type::enum_t<::facebook::fboss::cfg::SwitchType>>>,
@@ -9163,7 +9163,7 @@ std::pair<apache::thrift::ident::packetForwardingMode, Child<::facebook::fboss::
     STRUCT_CHILD_GETTERS(qcmEnable, 2);
     STRUCT_CHILD_GETTERS(ptpTcEnable, 3);
     STRUCT_CHILD_GETTERS(l2AgeTimerSeconds, 4);
-    STRUCT_CHILD_GETTERS(maxRouteCounterIDs, 5);
+    STRUCT_CHILD_GETTERS(maxRouteCounterIDs_DEPRECATED, 5);
     STRUCT_CHILD_GETTERS(blockNeighbors, 6);
     STRUCT_CHILD_GETTERS(macAddrsToBlock, 7);
     STRUCT_CHILD_GETTERS(switchType, 8);
@@ -9202,7 +9202,7 @@ std::pair<apache::thrift::ident::packetForwardingMode, Child<::facebook::fboss::
     else if constexpr (__id == apache::thrift::FieldId{2}) { return qcmEnable(); }
     else if constexpr (__id == apache::thrift::FieldId{3}) { return ptpTcEnable(); }
     else if constexpr (__id == apache::thrift::FieldId{4}) { return l2AgeTimerSeconds(); }
-    else if constexpr (__id == apache::thrift::FieldId{5}) { return maxRouteCounterIDs(); }
+    else if constexpr (__id == apache::thrift::FieldId{5}) { return maxRouteCounterIDs_DEPRECATED(); }
     else if constexpr (__id == apache::thrift::FieldId{6}) { return blockNeighbors(); }
     else if constexpr (__id == apache::thrift::FieldId{7}) { return macAddrsToBlock(); }
     else if constexpr (__id == apache::thrift::FieldId{8}) { return switchType(); }
@@ -11200,7 +11200,7 @@ class ChildThriftPath<::facebook::fboss::state::SwitchSettingsFields, ::facebook
 std::pair<apache::thrift::ident::qcmEnable, Child<bool, ::apache::thrift::type_class::integral, ::apache::thrift::type::bool_t>>,
 std::pair<apache::thrift::ident::ptpTcEnable, Child<bool, ::apache::thrift::type_class::integral, ::apache::thrift::type::bool_t>>,
 std::pair<apache::thrift::ident::l2AgeTimerSeconds, Child<::std::int32_t, ::apache::thrift::type_class::integral, ::apache::thrift::type::i32_t>>,
-std::pair<apache::thrift::ident::maxRouteCounterIDs, Child<::std::int32_t, ::apache::thrift::type_class::integral, ::apache::thrift::type::i32_t>>,
+std::pair<apache::thrift::ident::maxRouteCounterIDs_DEPRECATED, Child<::std::int32_t, ::apache::thrift::type_class::integral, ::apache::thrift::type::i32_t>>,
 std::pair<apache::thrift::ident::blockNeighbors, ChildThriftPath<::std::vector<::facebook::fboss::state::BlockedNeighbor>, ::facebook::fboss::fsdb::FsdbOperStateRoot, Self>>,
 std::pair<apache::thrift::ident::macAddrsToBlock, ChildThriftPath<::std::vector<::facebook::fboss::state::BlockedMacAddress>, ::facebook::fboss::fsdb::FsdbOperStateRoot, Self>>,
 std::pair<apache::thrift::ident::switchType_DEPRECATED, Child<::facebook::fboss::cfg::SwitchType, ::apache::thrift::type_class::enumeration, ::apache::thrift::type::enum_t<::facebook::fboss::cfg::SwitchType>>>,
@@ -11265,7 +11265,7 @@ std::pair<apache::thrift::ident::packetForwardingMode, Child<::facebook::fboss::
     STRUCT_CHILD_GETTERS(qcmEnable, 2);
     STRUCT_CHILD_GETTERS(ptpTcEnable, 3);
     STRUCT_CHILD_GETTERS(l2AgeTimerSeconds, 4);
-    STRUCT_CHILD_GETTERS(maxRouteCounterIDs, 5);
+    STRUCT_CHILD_GETTERS(maxRouteCounterIDs_DEPRECATED, 5);
     STRUCT_CHILD_GETTERS(blockNeighbors, 6);
     STRUCT_CHILD_GETTERS(macAddrsToBlock, 7);
     STRUCT_CHILD_GETTERS(switchType_DEPRECATED, 8);
@@ -11328,7 +11328,7 @@ std::pair<apache::thrift::ident::packetForwardingMode, Child<::facebook::fboss::
     else if constexpr (__id == apache::thrift::FieldId{2}) { return qcmEnable(); }
     else if constexpr (__id == apache::thrift::FieldId{3}) { return ptpTcEnable(); }
     else if constexpr (__id == apache::thrift::FieldId{4}) { return l2AgeTimerSeconds(); }
-    else if constexpr (__id == apache::thrift::FieldId{5}) { return maxRouteCounterIDs(); }
+    else if constexpr (__id == apache::thrift::FieldId{5}) { return maxRouteCounterIDs_DEPRECATED(); }
     else if constexpr (__id == apache::thrift::FieldId{6}) { return blockNeighbors(); }
     else if constexpr (__id == apache::thrift::FieldId{7}) { return macAddrsToBlock(); }
     else if constexpr (__id == apache::thrift::FieldId{8}) { return switchType_DEPRECATED(); }
