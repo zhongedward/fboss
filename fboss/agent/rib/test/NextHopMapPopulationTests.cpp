@@ -277,13 +277,14 @@ class NextHopMapPopulationTest : public ::testing::Test {
     }
 
     // Verify each NextHop in manager exists in state with same value
-    for (const auto& [id, nextHop] : managerIdToNextHop) {
+    for (const auto& [id, nextHopEntry] : managerIdToNextHop) {
       auto stateNextHop = stateIdToNextHopMap->getNextHopIf(id);
       ASSERT_NE(stateNextHop, nullptr)
           << "NextHop id " << id << " not in state";
       auto stateNextHopThrift = stateNextHop->toThrift();
       EXPECT_EQ(
-          network::toIPAddress(*stateNextHopThrift.address()), nextHop.addr())
+          network::toIPAddress(*stateNextHopThrift.address()),
+          nextHopEntry.nextHop.addr())
           << "NextHop address mismatch for id " << id;
     }
 

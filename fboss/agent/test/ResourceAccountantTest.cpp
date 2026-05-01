@@ -86,9 +86,9 @@ class ResourceAccountantTest : public ::testing::Test {
     auto fibInfo = getFibInfo();
     auto idToNextHopMap = fibInfo->getIdToNextHopMap();
     auto idToNextHopIdSetMap = fibInfo->getIdToNextHopIdSetMap();
-    for (const auto& [id, nhop] : nextHopIDManager_->getIdToNextHop()) {
+    for (const auto& [id, nhopEntry] : nextHopIDManager_->getIdToNextHop()) {
       if (!idToNextHopMap->getNextHopIf(id)) {
-        idToNextHopMap->addNextHop(id, nhop.toThrift());
+        idToNextHopMap->addNextHop(id, nhopEntry.nextHop.toThrift());
       }
     }
     for (const auto& [id, nhopIdSet] :
@@ -838,8 +838,9 @@ TEST_F(ResourceAccountantTest, resolvedAndUnresolvedRoutes) {
 
         // Populate ID maps for ID-based resolution
         auto id2Nhop = std::make_shared<IdToNextHopMap>();
-        for (const auto& [id, nhop] : nextHopIDManager_->getIdToNextHop()) {
-          id2Nhop->addNextHop(id, nhop.toThrift());
+        for (const auto& [id, nhopEntry] :
+             nextHopIDManager_->getIdToNextHop()) {
+          id2Nhop->addNextHop(id, nhopEntry.nextHop.toThrift());
         }
         auto id2NhopSetIds = std::make_shared<IdToNextHopIdSetMap>();
         for (const auto& [id, nhopIdSet] :

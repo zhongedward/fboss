@@ -49,9 +49,9 @@ std::shared_ptr<SwitchState> SwitchStateNextHopIdUpdater::operator()(
   // Diff nhop maps: clone FIB, add missing from RIB, remove stale from FIB
   auto updatedNhopMap =
       fibNhopMap ? fibNhopMap->clone() : std::make_shared<IdToNextHopMap>();
-  for (const auto& [id, nextHop] : ribNhopMap) {
+  for (const auto& [id, nextHopEntry] : ribNhopMap) {
     if (!fibNhopMap || !fibNhopMap->getNextHopIf(id)) {
-      updatedNhopMap->addNextHop(id, nextHop.toThrift());
+      updatedNhopMap->addNextHop(id, nextHopEntry.nextHop.toThrift());
       nhopChanged = true;
     }
   }

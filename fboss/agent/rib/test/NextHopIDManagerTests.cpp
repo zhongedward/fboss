@@ -208,9 +208,9 @@ TEST_F(NextHopIDManagerTest, getOrAllocateNextHopID) {
   EXPECT_EQ(manager_->getNextHopRefCount(nh2), 1);
   EXPECT_EQ(manager_->getNextHopRefCount(nh3), 1);
 
-  EXPECT_EQ(manager_->getIdToNextHop().at(id1), nh1);
-  EXPECT_EQ(manager_->getIdToNextHop().at(id2), nh2);
-  EXPECT_EQ(manager_->getIdToNextHop().at(id3), nh3);
+  EXPECT_EQ(manager_->getIdToNextHop().at(id1).nextHop, nh1);
+  EXPECT_EQ(manager_->getIdToNextHop().at(id2).nextHop, nh2);
+  EXPECT_EQ(manager_->getIdToNextHop().at(id3).nextHop, nh3);
 
   // Test reusing existing ID
 
@@ -218,7 +218,7 @@ TEST_F(NextHopIDManagerTest, getOrAllocateNextHopID) {
   auto id4 = iter4->second.id;
   EXPECT_EQ(id1, id4);
   EXPECT_EQ(manager_->getIdToNextHop().size(), 3);
-  EXPECT_EQ(manager_->getIdToNextHop().at(id4), nh1);
+  EXPECT_EQ(manager_->getIdToNextHop().at(id4).nextHop, nh1);
 
   EXPECT_EQ(manager_->getNextHopRefCount(nh1), 2);
   EXPECT_EQ(manager_->getNextHopRefCount(nh2), 1);
@@ -343,7 +343,7 @@ TEST_F(NextHopIDManagerTest, decrOrDeallocateNextHop) {
   manager_->decrOrDeallocateNextHop(nh1);
   EXPECT_EQ(manager_->getNextHopRefCount(nh1), 1);
   EXPECT_EQ(manager_->getIdToNextHop().size(), 3);
-  EXPECT_EQ(manager_->getIdToNextHop().at(id4), nh1);
+  EXPECT_EQ(manager_->getIdToNextHop().at(id4).nextHop, nh1);
 
   // Test deallocation works
   manager_->decrOrDeallocateNextHop(nh2);
@@ -357,7 +357,50 @@ TEST_F(NextHopIDManagerTest, decrOrDeallocateNextHop) {
   auto id5 = iter5->second.id;
   EXPECT_EQ(id5, NextHopID(4));
   EXPECT_EQ(manager_->getIdToNextHop().size(), 3);
-  EXPECT_EQ(manager_->getIdToNextHop().at(id5), nh2);
+  EXPECT_EQ(manager_->getIdToNextHop().at(id5).nextHop, nh2);
+}
+
+TEST_F(NextHopIDManagerTest, decrOrDeallocateNextHopByID) {
+  NextHop nh1 =
+      makeResolvedNextHop(InterfaceID(1), "10.0.0.1", UCMP_DEFAULT_WEIGHT);
+  NextHop nh2 =
+      makeResolvedNextHop(InterfaceID(1), "10.0.0.2", UCMP_DEFAULT_WEIGHT);
+  NextHop nh3 =
+      makeResolvedNextHop(InterfaceID(1), "10.0.0.3", UCMP_DEFAULT_WEIGHT);
+
+  // Test throws exception when decrementing non-existent NextHopID
+  EXPECT_THROW(
+      manager_->decrOrDeallocateNextHopByID(NextHopID(999)), FbossError);
+
+  // Allocate IDs
+  auto iter1 = manager_->getOrAllocateNextHopID(nh1);
+  auto id1 = iter1->second.id;
+  auto iter2 = manager_->getOrAllocateNextHopID(nh2);
+  auto id2 = iter2->second.id;
+  manager_->getOrAllocateNextHopID(nh3);
+  // Bump nh1 refcount to 2
+  manager_->getOrAllocateNextHopID(nh1);
+
+  EXPECT_EQ(manager_->getNextHopRefCount(nh1), 2);
+  EXPECT_EQ(manager_->getIdToNextHop().size(), 3);
+
+  // Decrement by ID — refcount goes from 2 to 1
+  EXPECT_FALSE(manager_->decrOrDeallocateNextHopByID(id1));
+  EXPECT_EQ(manager_->getNextHopRefCount(nh1), 1);
+  EXPECT_EQ(manager_->getIdToNextHop().size(), 3);
+
+  // Deallocate by ID — refcount goes from 1 to 0, entry removed
+  EXPECT_TRUE(manager_->decrOrDeallocateNextHopByID(id2));
+  EXPECT_EQ(manager_->getNextHopRefCount(nh2), 0);
+  EXPECT_EQ(manager_->getIdToNextHop().size(), 2);
+  EXPECT_EQ(manager_->getIdToNextHop().count(id2), 0);
+  EXPECT_EQ(manager_->nextHopToIDInfo_.count(nh2), 0);
+
+  // Re-allocating after deallocation gets a new ID
+  auto iter4 = manager_->getOrAllocateNextHopID(nh2);
+  auto id4 = iter4->second.id;
+  EXPECT_EQ(id4, NextHopID(4));
+  EXPECT_EQ(manager_->getIdToNextHop().at(id4).nextHop, nh2);
 }
 
 TEST_F(NextHopIDManagerTest, decrOrDeallocateNextHopIDSet) {
@@ -446,8 +489,8 @@ TEST_F(NextHopIDManagerTest, getOrAllocRouteNextHopSetIDWithEmptySet) {
 
   // Verify idToNextHop map
   EXPECT_EQ(manager_->getIdToNextHop().size(), 2);
-  EXPECT_EQ(manager_->getIdToNextHop().at(nhID1.value()), nh1);
-  EXPECT_EQ(manager_->getIdToNextHop().at(nhID2.value()), nh2);
+  EXPECT_EQ(manager_->getIdToNextHop().at(nhID1.value()).nextHop, nh1);
+  EXPECT_EQ(manager_->getIdToNextHop().at(nhID2.value()).nextHop, nh2);
 
   // Verify NextHopIDSet was created
   NextHopIDSet expectedIDSet1 = {nhID1.value(), nhID2.value()};
@@ -479,7 +522,7 @@ TEST_F(NextHopIDManagerTest, getOrAllocRouteNextHopSetIDWithEmptySet) {
 
   // Verify idToNextHop map now has 3 entries
   EXPECT_EQ(manager_->getIdToNextHop().size(), 3);
-  EXPECT_EQ(manager_->getIdToNextHop().at(nhID3.value()), nh3);
+  EXPECT_EQ(manager_->getIdToNextHop().at(nhID3.value()).nextHop, nh3);
 
   // Verify NextHopIDSet was created for nhSet2
   NextHopIDSet expectedIDSet2 = {nhID1.value(), nhID2.value(), nhID3.value()};
@@ -561,9 +604,9 @@ TEST_F(
 
   // Verify idToNextHop map
   EXPECT_EQ(manager_->getIdToNextHop().size(), 3);
-  EXPECT_EQ(manager_->getIdToNextHop().at(nhID1.value()), nh1);
-  EXPECT_EQ(manager_->getIdToNextHop().at(nhID2.value()), nh2);
-  EXPECT_EQ(manager_->getIdToNextHop().at(nhID3.value()), nh3);
+  EXPECT_EQ(manager_->getIdToNextHop().at(nhID1.value()).nextHop, nh1);
+  EXPECT_EQ(manager_->getIdToNextHop().at(nhID2.value()).nextHop, nh2);
+  EXPECT_EQ(manager_->getIdToNextHop().at(nhID3.value()).nextHop, nh3);
 
   // Verify NextHopIDSet was created
   NextHopIDSet expectedIDSet1 = {nhID1.value(), nhID2.value(), nhID3.value()};
@@ -620,7 +663,7 @@ TEST_F(
 
   // Verify idToNextHop map has 4 entries
   EXPECT_EQ(manager_->getIdToNextHop().size(), 4);
-  EXPECT_EQ(manager_->getIdToNextHop().at(nhID4.value()), nh4);
+  EXPECT_EQ(manager_->getIdToNextHop().at(nhID4.value()).nextHop, nh4);
 
   // Verify NextHopIDSet was created for nhSet3
   NextHopIDSet expectedIDSet3 = {
@@ -1013,9 +1056,9 @@ TEST_F(NextHopIDManagerTest, reconstructFromSwitchStateMaps) {
   // Verify maps are populated
   EXPECT_EQ(manager_->getIdToNextHop().size(), 3);
   EXPECT_EQ(manager_->getIdToNextHopIdSet().size(), 2);
-  EXPECT_EQ(manager_->getIdToNextHop().at(nhId1), nh1);
-  EXPECT_EQ(manager_->getIdToNextHop().at(nhId2), nh2);
-  EXPECT_EQ(manager_->getIdToNextHop().at(nhId3), nh3);
+  EXPECT_EQ(manager_->getIdToNextHop().at(nhId1).nextHop, nh1);
+  EXPECT_EQ(manager_->getIdToNextHop().at(nhId2).nextHop, nh2);
+  EXPECT_EQ(manager_->getIdToNextHop().at(nhId3).nextHop, nh3);
 
   NextHopIDSet expectedSet1 = {nhId1, nhId2};
   NextHopIDSet expectedSet2 = {nhId2, nhId3};
@@ -1150,10 +1193,10 @@ TEST_F(NextHopIDManagerTest, reconstructFromSwitchStateMapsMultiSwitch) {
 
   // Verify all 4 NextHops are in idToNextHop map
   EXPECT_EQ(manager_->getIdToNextHop().size(), 4);
-  EXPECT_EQ(manager_->getIdToNextHop().at(nhId1), nh1);
-  EXPECT_EQ(manager_->getIdToNextHop().at(nhId2), nh2);
-  EXPECT_EQ(manager_->getIdToNextHop().at(nhId3), nh3);
-  EXPECT_EQ(manager_->getIdToNextHop().at(nhId4), nh4);
+  EXPECT_EQ(manager_->getIdToNextHop().at(nhId1).nextHop, nh1);
+  EXPECT_EQ(manager_->getIdToNextHop().at(nhId2).nextHop, nh2);
+  EXPECT_EQ(manager_->getIdToNextHop().at(nhId3).nextHop, nh3);
+  EXPECT_EQ(manager_->getIdToNextHop().at(nhId4).nextHop, nh4);
 
   // Verify all 3 NextHopIDSets are in idToNextHopIdSet map
   EXPECT_EQ(manager_->getIdToNextHopIdSet().size(), 3);
@@ -1266,10 +1309,10 @@ TEST_F(NextHopIDManagerTest, Srv6NextHopGetDistinctIDs) {
   EXPECT_EQ(manager_->getIdToNextHop().size(), 4);
 
   // Verify idToNextHop map stores SRv6 nexthops correctly
-  EXPECT_EQ(manager_->getIdToNextHop().at(id1), srv6Nh1);
-  EXPECT_EQ(manager_->getIdToNextHop().at(id2), srv6Nh2);
-  EXPECT_EQ(manager_->getIdToNextHop().at(id3), srv6Nh3);
-  EXPECT_EQ(manager_->getIdToNextHop().at(id4), regularNh);
+  EXPECT_EQ(manager_->getIdToNextHop().at(id1).nextHop, srv6Nh1);
+  EXPECT_EQ(manager_->getIdToNextHop().at(id2).nextHop, srv6Nh2);
+  EXPECT_EQ(manager_->getIdToNextHop().at(id3).nextHop, srv6Nh3);
+  EXPECT_EQ(manager_->getIdToNextHop().at(id4).nextHop, regularNh);
 }
 
 TEST_F(NextHopIDManagerTest, Srv6NextHopSetID) {
@@ -1691,8 +1734,8 @@ TEST_F(NextHopIDManagerTest, assertNextHopIdMapsSameCheck) {
       multiSwitchFibInfoMap, nullptr, nullptr);
 
   EXPECT_EQ(manager_->getIdToNextHop().size(), 2);
-  EXPECT_EQ(manager_->getIdToNextHop().at(nhId1), nh1);
-  EXPECT_EQ(manager_->getIdToNextHop().at(nhId2), nh2);
+  EXPECT_EQ(manager_->getIdToNextHop().at(nhId1).nextHop, nh1);
+  EXPECT_EQ(manager_->getIdToNextHop().at(nhId2).nextHop, nh2);
 
   NextHopIDSet expectedSet1 = {nhId1, nhId2};
   EXPECT_EQ(manager_->getIdToNextHopIdSet().size(), 1);

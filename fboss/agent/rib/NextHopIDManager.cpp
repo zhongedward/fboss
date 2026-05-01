@@ -28,8 +28,8 @@ NextHopIDManager::NextHopInfoIter NextHopIDManager::getOrAllocateNextHopID(
     const NextHop& nextHop) {
   auto it = nextHopToIDInfo_.find(nextHop);
   if (it != nextHopToIDInfo_.end()) {
-    // Existing NextHop found, increment reference count and return iterator
-    it->second.count++;
+    // Existing NextHop found, increment reference count in idToNextHop_
+    idToNextHop_.at(it->second.id).refCount++;
     return it;
   }
 
@@ -43,9 +43,10 @@ NextHopIDManager::NextHopInfoIter NextHopIDManager::getOrAllocateNextHopID(
       << "Next Hop ID is in the range of [0, 2^62 - 1], the id space has been exhausted! It does not support wrap around!";
 
   auto [idInfoItr, idInfoInserted] =
-      nextHopToIDInfo_.emplace(nextHop, NextHopIDInfo(newID, 1));
+      nextHopToIDInfo_.emplace(nextHop, NextHopIDInfo(newID));
   CHECK(idInfoInserted);
-  auto [idMapItr, idMapInserted] = idToNextHop_.insert({newID, nextHop});
+  auto [idMapItr, idMapInserted] =
+      idToNextHop_.emplace(newID, NextHopEntry(nextHop, 1));
   CHECK(idMapInserted);
   return idInfoItr;
 }
@@ -82,7 +83,14 @@ NextHopIDManager::NextHopIdSetIter NextHopIDManager::getOrAllocateNextHopSetID(
 uint32_t NextHopIDManager::getNextHopRefCount(const NextHop& nextHop) {
   auto it = nextHopToIDInfo_.find(nextHop);
   if (it != nextHopToIDInfo_.end()) {
-    return it->second.count;
+    auto idIt = idToNextHop_.find(it->second.id);
+    if (idIt != idToNextHop_.end()) {
+      return idIt->second.refCount;
+    }
+    throw FbossError(
+        "NextHopID ",
+        it->second.id,
+        " in nextHopToIDInfo_ but missing from idToNextHop_");
   }
   return 0;
 }
@@ -102,14 +110,22 @@ bool NextHopIDManager::decrOrDeallocateNextHop(const NextHop& nextHop) {
     throw FbossError(
         "Cannot decrement reference count or deallocate for non-existent NextHop");
   }
-  CHECK_GT(it->second.count, 0);
-  it->second.count--;
-  if (it->second.count == 0) {
-    // Reference count reached 0, deallocate
-    auto erasedIdMap = idToNextHop_.erase(it->second.id);
-    CHECK_EQ(erasedIdMap, 1);
-    auto erasedIdInfo = nextHopToIDInfo_.erase(it->first);
-    CHECK_EQ(erasedIdInfo, 1);
+  return decrOrDeallocateNextHopByID(it->second.id);
+}
+
+bool NextHopIDManager::decrOrDeallocateNextHopByID(const NextHopID& nextHopID) {
+  auto idIt = idToNextHop_.find(nextHopID);
+  if (idIt == idToNextHop_.end()) {
+    throw FbossError(
+        "Cannot decrement reference count or deallocate for non-existent NextHopID ",
+        nextHopID);
+  }
+  CHECK_GT(idIt->second.refCount, 0);
+  idIt->second.refCount--;
+  if (idIt->second.refCount == 0) {
+    auto erasedInfo = nextHopToIDInfo_.erase(idIt->second.nextHop);
+    CHECK_EQ(erasedInfo, 1);
+    idToNextHop_.erase(idIt);
     return true;
   }
   return false;
@@ -179,12 +195,11 @@ NextHopIDManager::getOrAllocRouteNextHopSetID(
   NextHopIDSet nextHopIDSet;
   for (const auto& nextHop : nextHopSet) {
     auto nhIter = getOrAllocateNextHopID(nextHop);
-    nextHopIDSet.insert(nhIter->second.id);
-    // Check if this was a new allocation (count == 1 means newly allocated)
-    if (nhIter->second.count == 1) {
-      // Track newly allocated NextHopID for the caller to update FibInfo
-      // Caller can retrieve NextHop from idToNextHop_ map using this ID
-      result.addedNextHopIds.push_back(nhIter->second.id);
+    auto nhId = nhIter->second.id;
+    nextHopIDSet.insert(nhId);
+    // Check if this was a new allocation (refCount == 1 means newly allocated)
+    if (idToNextHop_.at(nhId).refCount == 1) {
+      result.addedNextHopIds.push_back(nhId);
     }
   }
 
@@ -206,12 +221,9 @@ NextHopIDManager::decrOrDeallocRouteNextHopSetID(NextHopSetID nextHopSetID) {
   const NextHopIDSet& nextHopIDSet = it->second;
 
   // Decrement the reference count for each NextHopID in the NextHopIDSet
+  // Uses ID-based lookup to avoid hashing the NextHop object
   for (const auto& nextHopID : nextHopIDSet) {
-    auto nextHopIt = idToNextHop_.find(nextHopID);
-    CHECK(nextHopIt != idToNextHop_.end())
-        << "NextHopID " << nextHopID << " in NextHopIDSet doesn't exist!!";
-
-    auto derefNextHop = decrOrDeallocateNextHop(nextHopIt->second);
+    auto derefNextHop = decrOrDeallocateNextHopByID(nextHopID);
     if (derefNextHop) {
       XLOG(DBG3) << "NextHopID " << nextHopID << " deallocated";
       // Track deallocated NextHops for the caller to update FibInfo
@@ -394,7 +406,7 @@ std::optional<RouteNextHopSet> NextHopIDManager::getNextHopsIf(
     CHECK(nextHopIt != idToNextHop_.end())
         << "NextHopId " << nextHopID
         << " not found in idToNextHop_ for NextHopSetID " << nextHopSetID;
-    nextHopVec.push_back(nextHopIt->second);
+    nextHopVec.push_back(nextHopIt->second.nextHop);
   }
   return RouteNextHopSet(nextHopVec.begin(), nextHopVec.end());
 }
@@ -411,7 +423,7 @@ bool NextHopIDManager::nextHopSetContainsAddr(
     CHECK(nextHopIt != idToNextHop_.end())
         << "NextHopId " << nextHopID
         << " not found in idToNextHop_ for NextHopSetID " << nextHopSetID;
-    if (nextHopIt->second.addr() == ip) {
+    if (nextHopIt->second.nextHop.addr() == ip) {
       return true;
     }
   }
@@ -501,10 +513,10 @@ void NextHopIDManager::reconstructFromSwitchStateMaps(
       // Update NextHop maps and refcounts
       auto nhInfoIt = nextHopToIDInfo_.find(nextHop);
       if (nhInfoIt == nextHopToIDInfo_.end()) {
-        nextHopToIDInfo_.emplace(nextHop, NextHopIDInfo(nextHopID, 1));
-        idToNextHop_[nextHopID] = nextHop;
+        nextHopToIDInfo_.emplace(nextHop, NextHopIDInfo(nextHopID));
+        idToNextHop_.emplace(nextHopID, NextHopEntry(nextHop, 1));
       } else {
-        nhInfoIt->second.count++;
+        idToNextHop_.at(nhInfoIt->second.id).refCount++;
       }
       maxNextHopId = std::max(maxNextHopId, nextHopID);
     }
@@ -610,7 +622,7 @@ void NextHopIDManager::reconstructFromSwitchStateMaps(
             CHECK(nextHopIt != idToNextHop_.end())
                 << "NextHopId " << nextHopID
                 << " not found in idToNextHop_ after processNhopSetId";
-            nextHopVec.push_back(nextHopIt->second);
+            nextHopVec.push_back(nextHopIt->second.nextHop);
           }
           RouteNextHopSet nextHopSet(nextHopVec.begin(), nextHopVec.end());
 

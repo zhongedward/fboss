@@ -42,12 +42,22 @@ namespace facebook::fboss {
  */
 class NextHopIDManager {
  public:
-  // Structure to hold ID and reference count for NextHops
+  // Structure to hold ID for NextHops (maps NextHop → its assigned ID)
   struct NextHopIDInfo {
     NextHopID id;
-    uint32_t count = 0;
 
-    NextHopIDInfo(NextHopID id_, uint32_t count_) : id(id_), count(count_) {}
+    NextHopIDInfo(NextHopID id_) : id(id_) {}
+  };
+
+  // Structure to hold NextHop and its reference count (maps NextHopID → NextHop
+  // + refcount). This enables O(1) refcount decrement by NextHopID without
+  // hashing the NextHop object.
+  struct NextHopEntry {
+    NextHop nextHop;
+    uint32_t refCount{0};
+
+    NextHopEntry(NextHop nh, uint32_t rc)
+        : nextHop(std::move(nh)), refCount(rc) {}
   };
 
   // Structure to hold ID and reference count for NextHopSets
@@ -130,8 +140,9 @@ class NextHopIDManager {
   // reaches 0. Returns true if deallocated, false otherwise
   bool decrOrDeallocateNextHopIDSet(const NextHopIDSet& nextHopIDSet);
 
-  // Get the reverse lookup map from NextHopID to NextHop
-  const std::unordered_map<NextHopID, NextHop>& getIdToNextHop() const {
+  // Get the reverse lookup map from NextHopID to NextHopEntry (NextHop +
+  // refCount)
+  const std::unordered_map<NextHopID, NextHopEntry>& getIdToNextHop() const {
     return idToNextHop_;
   }
 
@@ -281,6 +292,10 @@ class NextHopIDManager {
       const std::shared_ptr<MultiLabelForwardingInformationBase>& labelFib);
 
  private:
+  // Decrement reference count for a NextHopID and deallocate if count reaches 0
+  // Returns true if deallocated, false otherwise.
+  bool decrOrDeallocateNextHopByID(const NextHopID& nextHopID);
+
   static constexpr int64_t kNextHopIDStart = 1;
   static constexpr int64_t kNextHopSetIDStart = 1LL << 62;
 
@@ -298,8 +313,8 @@ class NextHopIDManager {
   // Mapping from set of NextHopIDs to its NextHopSetID and reference count
   std::unordered_map<NextHopIDSet, NextHopSetIDInfo> nextHopIdSetToIDInfo_;
 
-  // Reverse lookup maps for clients to convert IDs back to NextHops
-  std::unordered_map<NextHopID, NextHop> idToNextHop_;
+  // Reverse lookup map: NextHopID → {NextHop, refCount}
+  std::unordered_map<NextHopID, NextHopEntry> idToNextHop_;
 
   // Map from NextHopSetID to set of NextHopIDs
   std::unordered_map<NextHopSetID, NextHopIDSet> idToNextHopIdSet_;
@@ -334,6 +349,7 @@ class NextHopIDManager {
   FRIEND_TEST(NextHopIDManagerTest, getOrAllocateNextHopSetID);
   FRIEND_TEST(NextHopIDManagerTest, getOrAllocateNextHopSetIDOrderIndependence);
   FRIEND_TEST(NextHopIDManagerTest, decrOrDeallocateNextHop);
+  FRIEND_TEST(NextHopIDManagerTest, decrOrDeallocateNextHopByID);
   FRIEND_TEST(NextHopIDManagerTest, decrOrDeallocateNextHopIDSet);
   FRIEND_TEST(NextHopIDManagerTest, getOrAllocRouteNextHopSetIDWithEmptySet);
   FRIEND_TEST(
