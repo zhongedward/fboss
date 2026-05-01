@@ -282,7 +282,7 @@ DEFINE_int32(
 
 DEFINE_bool(
     enable_mysid_resource_protection,
-    false,
+    true,
     "Enable MySID resource protection in ResourceAccountant");
 
 DEFINE_int32(
@@ -292,7 +292,7 @@ DEFINE_int32(
 
 DEFINE_bool(
     enable_srv6_nexthop_resource_protection,
-    false,
+    true,
     "Enable SRv6 next hop resource protection in ResourceAccountant");
 
 DEFINE_int32(
