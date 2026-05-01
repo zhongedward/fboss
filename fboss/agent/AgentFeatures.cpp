@@ -533,3 +533,8 @@ DEFINE_int32(
     max_tx_packets,
     100000, // 1 gb / 10 kb
     "the point at which we start dropping tx packets");
+
+DEFINE_bool(
+    enable_route_counters_for_named_nhg,
+    false,
+    "Implicitly associate a route counter for routes using named NHG");
