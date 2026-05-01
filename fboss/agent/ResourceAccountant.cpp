@@ -337,6 +337,25 @@ bool ResourceAccountant::checkAndUpdateRouteResource(bool add) {
   return true;
 }
 
+template <typename AddrT>
+void ResourceAccountant::updateRouteCounterResource(
+    const std::shared_ptr<Route<AddrT>>& route,
+    bool add) {
+  auto counterID = route->getForwardInfo().getCounterID();
+  if (!counterID.has_value()) {
+    return;
+  }
+  if (add) {
+    routeCounterRefMap_[*counterID]++;
+  } else {
+    auto it = routeCounterRefMap_.find(*counterID);
+    CHECK(it != routeCounterRefMap_.end());
+    if (--it->second == 0) {
+      routeCounterRefMap_.erase(it);
+    }
+  }
+}
+
 bool ResourceAccountant::routeAndEcmpStateChangedImpl(const StateDelta& delta) {
   if (!checkRouteUpdate_ || !FLAGS_enable_route_resource_protection) {
     return true;
@@ -355,12 +374,14 @@ bool ResourceAccountant::routeAndEcmpStateChangedImpl(const StateDelta& delta) {
           validRouteUpdate &=
               checkAndUpdateEcmpResource(oldRoute, false /* add */, oldState);
           validRouteUpdate &= checkAndUpdateRouteResource(false /* add */);
+          updateRouteCounterResource(oldRoute, false /* add */);
           return;
         }
         if (!oldRoute->isResolved() && newRoute->isResolved()) {
           validRouteUpdate &=
               checkAndUpdateEcmpResource(newRoute, true /* add */, newState);
           validRouteUpdate &= checkAndUpdateRouteResource(true /* add */);
+          updateRouteCounterResource(newRoute, true /* add */);
           return;
         }
         // Both old and new are resolved
@@ -369,12 +390,15 @@ bool ResourceAccountant::routeAndEcmpStateChangedImpl(const StateDelta& delta) {
             checkAndUpdateEcmpResource(newRoute, true, newState);
         validRouteUpdate &=
             checkAndUpdateEcmpResource(oldRoute, false, oldState);
+        updateRouteCounterResource(newRoute, true);
+        updateRouteCounterResource(oldRoute, false);
       },
       [&](RouterID /*rid*/, const auto& newRoute) {
         if (newRoute->isResolved()) {
           validRouteUpdate &=
               checkAndUpdateEcmpResource(newRoute, true /* add */, newState);
           validRouteUpdate &= checkAndUpdateRouteResource(true /* add */);
+          updateRouteCounterResource(newRoute, true /* add */);
         }
       },
       [&](RouterID /*rid*/, const auto& delRoute) {
@@ -382,6 +406,7 @@ bool ResourceAccountant::routeAndEcmpStateChangedImpl(const StateDelta& delta) {
           validRouteUpdate &=
               checkAndUpdateEcmpResource(delRoute, false /* add */, oldState);
           validRouteUpdate &= checkAndUpdateRouteResource(false /* add */);
+          updateRouteCounterResource(delRoute, false /* add */);
         }
       });
 

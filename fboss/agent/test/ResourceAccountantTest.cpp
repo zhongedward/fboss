@@ -1426,4 +1426,71 @@ TEST_F(ResourceAccountantTest, srv6NextHopResourceExceeded) {
       false /* intermediateState */));
 }
 
+TEST_F(ResourceAccountantTest, routeCounterRefCounting) {
+  RouteNextHopSet nhops1{
+      ResolvedNextHop(folly::IPAddress("1.1.1.1"), InterfaceID(1), ecmpWeight)};
+  RouteNextHopSet nhops2{
+      ResolvedNextHop(folly::IPAddress("2.2.2.2"), InterfaceID(2), ecmpWeight)};
+
+  RouteCounterID counter1("route.counter.0");
+  RouteCounterID counter2("route.counter.1");
+
+  auto makeEntryWithCounter =
+      [](const RouteNextHopSet& nhops,
+         const std::optional<RouteCounterID>& counterID) {
+        RouteNextHopEntry base(nhops, AdminDistance::EBGP);
+        auto thrift = base.toThrift();
+        if (counterID.has_value()) {
+          thrift.counterID() = *counterID;
+        }
+        RouteNextHopEntry entry;
+        entry.fromThrift(thrift);
+        return entry;
+      };
+
+  // Route A with counter1
+  auto entry1 = makeEntryWithCounter(nhops1, counter1);
+  auto routeA =
+      makeV6Route({folly::IPAddressV6("2401::1"), 128}, entry1, nhops1);
+  resourceAccountant_->updateRouteCounterResource(routeA, true);
+  EXPECT_EQ(resourceAccountant_->routeCounterRefMap_.size(), 1);
+  EXPECT_EQ(resourceAccountant_->routeCounterRefMap_[counter1], 1);
+
+  // Route B also uses counter1 — refcount goes to 2
+  auto entry2 = makeEntryWithCounter(nhops2, counter1);
+  auto routeB =
+      makeV6Route({folly::IPAddressV6("2401::2"), 128}, entry2, nhops2);
+  resourceAccountant_->updateRouteCounterResource(routeB, true);
+  EXPECT_EQ(resourceAccountant_->routeCounterRefMap_.size(), 1);
+  EXPECT_EQ(resourceAccountant_->routeCounterRefMap_[counter1], 2);
+
+  // Route C with counter2
+  auto entry3 = makeEntryWithCounter(nhops1, counter2);
+  auto routeC =
+      makeV6Route({folly::IPAddressV6("2401::3"), 128}, entry3, nhops1);
+  resourceAccountant_->updateRouteCounterResource(routeC, true);
+  EXPECT_EQ(resourceAccountant_->routeCounterRefMap_.size(), 2);
+  EXPECT_EQ(resourceAccountant_->routeCounterRefMap_[counter2], 1);
+
+  // Remove route A — counter1 refcount drops to 1
+  resourceAccountant_->updateRouteCounterResource(routeA, false);
+  EXPECT_EQ(resourceAccountant_->routeCounterRefMap_[counter1], 1);
+
+  // Remove route B — counter1 refcount drops to 0, entry erased
+  resourceAccountant_->updateRouteCounterResource(routeB, false);
+  EXPECT_EQ(resourceAccountant_->routeCounterRefMap_.count(counter1), 0);
+  EXPECT_EQ(resourceAccountant_->routeCounterRefMap_.size(), 1);
+
+  // Route without counter — no-op
+  auto entryNoCounter = makeEntryWithCounter(nhops1, std::nullopt);
+  auto routeD =
+      makeV6Route({folly::IPAddressV6("2401::4"), 128}, entryNoCounter, nhops1);
+  resourceAccountant_->updateRouteCounterResource(routeD, true);
+  EXPECT_EQ(resourceAccountant_->routeCounterRefMap_.size(), 1);
+
+  // Remove route C — counter2 erased, map empty
+  resourceAccountant_->updateRouteCounterResource(routeC, false);
+  EXPECT_TRUE(resourceAccountant_->routeCounterRefMap_.empty());
+}
+
 } // namespace facebook::fboss
