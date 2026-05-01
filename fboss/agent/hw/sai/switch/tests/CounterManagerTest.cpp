@@ -13,7 +13,6 @@ class CounterManagerTest : public ManagerTestBase {
   void SetUp() override {
     setupStage = SetupStage::PORT | SetupStage::VLAN | SetupStage::INTERFACE;
     ManagerTestBase::SetUp();
-    saiManagerTable->counterManager().setMaxRouteCounterIDs(10);
   }
 };
 
@@ -95,18 +94,6 @@ TEST_F(CounterManagerTest, getStatsForCounter) {
 
   auto stats = saiManagerTable->counterManager().getHwSwitchCounterStats();
   EXPECT_EQ(*stats.routeCounters()->at("counter.0").bytes(), 42);
-}
-
-TEST_F(CounterManagerTest, exceedMaxRouteCounterIDs) {
-  saiManagerTable->counterManager().setMaxRouteCounterIDs(2);
-
-  auto handle0 =
-      saiManagerTable->counterManager().incRefOrAddRouteCounter("counter.0");
-  auto handle1 =
-      saiManagerTable->counterManager().incRefOrAddRouteCounter("counter.1");
-  EXPECT_THROW(
-      saiManagerTable->counterManager().incRefOrAddRouteCounter("counter.2"),
-      FbossError);
 }
 
 TEST_F(CounterManagerTest, counterLabelTooLong) {

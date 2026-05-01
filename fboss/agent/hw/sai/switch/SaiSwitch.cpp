@@ -1933,12 +1933,6 @@ void SaiSwitch::processSwitchSettingsChangeSansDrainedEntryLocked(
     }
   }
 
-  if (oldSwitchSettings->getMaxRouteCounterIDs() !=
-      newSwitchSettings->getMaxRouteCounterIDs()) {
-    managerTable_->counterManager().setMaxRouteCounterIDs(
-        newSwitchSettings->getMaxRouteCounterIDs());
-  }
-
   {
     const auto oldVal = oldSwitchSettings->getForceTrafficOverFabric();
     const auto newVal = newSwitchSettings->getForceTrafficOverFabric();

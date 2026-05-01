@@ -54,9 +54,6 @@ class SaiCounterManager {
 
   std::shared_ptr<SaiCounterHandle> incRefOrAddRouteCounter(
       std::string counterID);
-  void setMaxRouteCounterIDs(uint32_t count) {
-    maxRouteCounterIDs_ = count;
-  }
   uint64_t getStats(std::string counterID) const;
   void updateStats();
   HwSwitchCounterStats getHwSwitchCounterStats() const;
@@ -66,7 +63,6 @@ class SaiCounterManager {
   SaiManagerTable* managerTable_;
   SaiPlatform* platform_;
   FlatRefMap<RouteCounterID, SaiCounterHandle> routeCounters_;
-  uint32_t maxRouteCounterIDs_;
 };
 
 } // namespace facebook::fboss
