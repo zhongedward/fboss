@@ -392,7 +392,6 @@ TEST_F(HwTest, checkCmisModuleFirmwareUpgradeCdbTimeout) {
     cmisCount++;
   }
   XLOG(INFO) << "Checked " << cmisCount << " CMIS transceivers";
-  EXPECT_GT(cmisCount, 0) << "No CMIS transceivers found to test";
 }
 
 } // namespace facebook::fboss

@@ -35,6 +35,13 @@ namespace facebook::fboss {
 // CMIS firmware related register offsets
 constexpr uint8_t kfirmwareVersionReg = 39;
 constexpr uint8_t kModulePasswordEntryReg = 122;
+constexpr uint8_t kPageSelectReg = 127;
+
+// MEDIA_INTERFACE_TECHNOLOGY register (Page 00h, Byte 212)
+constexpr uint8_t kMediaInterfaceTechnologyReg = 212;
+constexpr uint8_t kPage0 = 0x00;
+constexpr uint8_t kCBandTunableLaser = 0x10;
+constexpr uint8_t kLBandTunableLaser = 0x11;
 
 constexpr int moduleDatapathInitDurationUsec = 5000000;
 
@@ -113,7 +120,7 @@ uint64_t CmisFirmwareUpgrader::resolveFwUpgradeCdbTimeout(
   }
 
   uint64_t maxDurationWriteUsec = commandBlock.getMaxDurationWriteUsec();
-  if (maxDurationWriteUsec > 0) {
+  if (maxDurationWriteUsec > 0 && isTunableModule()) {
     uint64_t timeoutUsec = std::min(maxDurationWriteUsec, kMaxCdbTimeoutUsec);
     if (maxDurationWriteUsec > kMaxCdbTimeoutUsec) {
       XLOG(INFO) << folly::sformat(
@@ -135,6 +142,32 @@ uint64_t CmisFirmwareUpgrader::resolveFwUpgradeCdbTimeout(
       moduleId_,
       FLAGS_cdb_command_timeout_usec);
   return FLAGS_cdb_command_timeout_usec;
+}
+
+bool CmisFirmwareUpgrader::isTunableModule() const {
+  try {
+    uint8_t page = kPage0;
+    bus_->writeTransceiver(
+        {TransceiverAccessParameter::ADDR_QSFP, kPageSelectReg, 1, kLowerPage},
+        &page,
+        POST_I2C_WRITE_NO_DELAY_US,
+        kFwUpgrade);
+    uint8_t techValue = 0;
+    bus_->readTransceiver(
+        {TransceiverAccessParameter::ADDR_QSFP,
+         kMediaInterfaceTechnologyReg,
+         1,
+         kPage0},
+        &techValue,
+        kFwUpgrade);
+    return techValue == kCBandTunableLaser || techValue == kLBandTunableLaser;
+  } catch (const std::exception& e) {
+    XLOG(INFO) << folly::sformat(
+        "isTunableModule: Mod{:d}: Failed to read MEDIA_INTERFACE_TECHNOLOGY: {}",
+        moduleId_,
+        e.what());
+    return false;
+  }
 }
 
 /*
