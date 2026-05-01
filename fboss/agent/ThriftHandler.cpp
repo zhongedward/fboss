@@ -913,6 +913,11 @@ void ThriftHandler::updateUnicastRoutesImpl(
         }
       }
     }
+    if (FLAGS_enable_route_counters_for_named_nhg &&
+        route.namedRouteDestination()->getType() ==
+            NamedRouteDestination::Type::nextHopGroup) {
+      route.counterID() = *route.namedRouteDestination()->nextHopGroup_ref();
+    }
     updater.addRoute(routerID, clientID, route);
   }
   RouteUpdateWrapper::SyncFibFor syncFibs;

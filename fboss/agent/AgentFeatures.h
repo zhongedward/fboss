@@ -99,6 +99,7 @@ DECLARE_bool(enable_srv6_nexthop_resource_protection);
 DECLARE_int32(srv6_nexthop_resource_percentage);
 DECLARE_bool(enable_route_counter_resource_protection);
 DECLARE_int32(route_counter_resource_percentage);
+DECLARE_bool(enable_route_counters_for_named_nhg);
 DECLARE_int32(switch_index_for_testing);
 DECLARE_int32(switch_id_for_testing);
 DECLARE_uint32(counter_refresh_interval);
