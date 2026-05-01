@@ -1426,7 +1426,7 @@ TEST_F(ResourceAccountantTest, srv6NextHopResourceExceeded) {
       false /* intermediateState */));
 }
 
-TEST_F(ResourceAccountantTest, routeCounterRefCounting) {
+TEST_F(ResourceAccountantTest, checkAndUpdateRouteCounterResource) {
   RouteNextHopSet nhops1{
       ResolvedNextHop(folly::IPAddress("1.1.1.1"), InterfaceID(1), ecmpWeight)};
   RouteNextHopSet nhops2{
@@ -1452,7 +1452,7 @@ TEST_F(ResourceAccountantTest, routeCounterRefCounting) {
   auto entry1 = makeEntryWithCounter(nhops1, counter1);
   auto routeA =
       makeV6Route({folly::IPAddressV6("2401::1"), 128}, entry1, nhops1);
-  resourceAccountant_->updateRouteCounterResource(routeA, true);
+  resourceAccountant_->checkAndUpdateRouteCounterResource(routeA, true);
   EXPECT_EQ(resourceAccountant_->routeCounterRefMap_.size(), 1);
   EXPECT_EQ(resourceAccountant_->routeCounterRefMap_[counter1], 1);
 
@@ -1460,7 +1460,7 @@ TEST_F(ResourceAccountantTest, routeCounterRefCounting) {
   auto entry2 = makeEntryWithCounter(nhops2, counter1);
   auto routeB =
       makeV6Route({folly::IPAddressV6("2401::2"), 128}, entry2, nhops2);
-  resourceAccountant_->updateRouteCounterResource(routeB, true);
+  resourceAccountant_->checkAndUpdateRouteCounterResource(routeB, true);
   EXPECT_EQ(resourceAccountant_->routeCounterRefMap_.size(), 1);
   EXPECT_EQ(resourceAccountant_->routeCounterRefMap_[counter1], 2);
 
@@ -1468,16 +1468,16 @@ TEST_F(ResourceAccountantTest, routeCounterRefCounting) {
   auto entry3 = makeEntryWithCounter(nhops1, counter2);
   auto routeC =
       makeV6Route({folly::IPAddressV6("2401::3"), 128}, entry3, nhops1);
-  resourceAccountant_->updateRouteCounterResource(routeC, true);
+  resourceAccountant_->checkAndUpdateRouteCounterResource(routeC, true);
   EXPECT_EQ(resourceAccountant_->routeCounterRefMap_.size(), 2);
   EXPECT_EQ(resourceAccountant_->routeCounterRefMap_[counter2], 1);
 
   // Remove route A — counter1 refcount drops to 1
-  resourceAccountant_->updateRouteCounterResource(routeA, false);
+  resourceAccountant_->checkAndUpdateRouteCounterResource(routeA, false);
   EXPECT_EQ(resourceAccountant_->routeCounterRefMap_[counter1], 1);
 
   // Remove route B — counter1 refcount drops to 0, entry erased
-  resourceAccountant_->updateRouteCounterResource(routeB, false);
+  resourceAccountant_->checkAndUpdateRouteCounterResource(routeB, false);
   EXPECT_EQ(resourceAccountant_->routeCounterRefMap_.count(counter1), 0);
   EXPECT_EQ(resourceAccountant_->routeCounterRefMap_.size(), 1);
 
@@ -1485,12 +1485,56 @@ TEST_F(ResourceAccountantTest, routeCounterRefCounting) {
   auto entryNoCounter = makeEntryWithCounter(nhops1, std::nullopt);
   auto routeD =
       makeV6Route({folly::IPAddressV6("2401::4"), 128}, entryNoCounter, nhops1);
-  resourceAccountant_->updateRouteCounterResource(routeD, true);
+  resourceAccountant_->checkAndUpdateRouteCounterResource(routeD, true);
   EXPECT_EQ(resourceAccountant_->routeCounterRefMap_.size(), 1);
 
   // Remove route C — counter2 erased, map empty
-  resourceAccountant_->updateRouteCounterResource(routeC, false);
+  resourceAccountant_->checkAndUpdateRouteCounterResource(routeC, false);
   EXPECT_TRUE(resourceAccountant_->routeCounterRefMap_.empty());
+}
+
+TEST_F(ResourceAccountantTest, routeCounterResourceExceeded) {
+  RouteNextHopSet nhops{
+      ResolvedNextHop(folly::IPAddress("1.1.1.1"), InterfaceID(1), ecmpWeight)};
+
+  auto makeEntryWithCounter = [](const RouteNextHopSet& nhops,
+                                 const RouteCounterID& counterID) {
+    RouteNextHopEntry base(nhops, AdminDistance::EBGP);
+    auto thrift = base.toThrift();
+    thrift.counterID() = counterID;
+    RouteNextHopEntry entry;
+    entry.fromThrift(thrift);
+    return entry;
+  };
+
+  // Fill up to the ASIC limit (4096 unique counters for Yuba/G202x)
+  // Use the ref map directly to simulate near-capacity
+  for (uint32_t i = 0; i < 4096; i++) {
+    resourceAccountant_->routeCounterRefMap_[fmt::format("counter.{}", i)] = 1;
+  }
+
+  // At 100% (intermediate) — should pass since we're at exactly the limit
+  EXPECT_TRUE(resourceAccountant_->checkRouteCounterResource(
+      true /* intermediateState */));
+
+  // At 75% (final) — should fail since 4096 > 3072 (75% of 4096)
+  EXPECT_FALSE(resourceAccountant_->checkRouteCounterResource(
+      false /* intermediateState */));
+
+  // Adding one more unique counter should fail intermediate check too
+  auto entry = makeEntryWithCounter(nhops, "counter.4096");
+  auto route = makeV6Route({folly::IPAddressV6("2401::1"), 128}, entry, nhops);
+  EXPECT_FALSE(
+      resourceAccountant_->checkAndUpdateRouteCounterResource(route, true));
+  EXPECT_EQ(resourceAccountant_->routeCounterRefMap_.size(), 4097);
+
+  // Adding a route that shares an existing counter should pass (no new counter)
+  auto entryShared = makeEntryWithCounter(nhops, "counter.0");
+  auto routeShared =
+      makeV6Route({folly::IPAddressV6("2401::2"), 128}, entryShared, nhops);
+  EXPECT_TRUE(resourceAccountant_->checkAndUpdateRouteCounterResource(
+      routeShared, true));
+  EXPECT_EQ(resourceAccountant_->routeCounterRefMap_["counter.0"], 2);
 }
 
 } // namespace facebook::fboss
