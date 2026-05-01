@@ -168,20 +168,7 @@ BcmRouteCounterTable::referenceOrEmplaceCounterID(RouteCounterID id) {
                  << globalIngressModeId_;
     }
   }
-  std::shared_ptr<BcmRouteCounterBase> counterRef =
-      counterIDs_.refOrEmplace(id, hw_, id, globalIngressModeId_).first;
-  if (counterIDs_.size() > maxRouteCounterIDs_) {
-    XLOG(ERR) << "RouteCounterIDs in use " << counterIDs_.size()
-              << " exceed max count " << maxRouteCounterIDs_;
-    // throw Bcm full error so that overflow error handling kicks in
-    throw BcmError(
-        BCM_E_FULL,
-        "RouteCounterIDs in use ",
-        counterIDs_.size(),
-        " exceed max count ",
-        maxRouteCounterIDs_);
-  }
-  return counterRef;
+  return counterIDs_.refOrEmplace(id, hw_, id, globalIngressModeId_).first;
 }
 
 folly::dynamic BcmRouteCounterTable::toFollyDynamic() const {
@@ -236,20 +223,7 @@ BcmRouteFlexCounterTable::referenceOrEmplaceCounterID(RouteCounterID id) {
                  << v6FlexCounterAction->getActionId();
     }
   }
-  std::shared_ptr<BcmRouteCounterBase> counterRef =
-      counterIDs_.refOrEmplace(id, hw_, id, v6FlexCounterAction).first;
-  if (counterIDs_.size() > maxRouteCounterIDs_) {
-    XLOG(ERR) << "RouteCounterIDs in use " << counterIDs_.size()
-              << " exceed max count " << maxRouteCounterIDs_;
-    // throw Bcm full error so that overflow error handling kicks in
-    throw BcmError(
-        BCM_E_FULL,
-        "RouteCounterIDs in use ",
-        counterIDs_.size(),
-        " exceed max count ",
-        maxRouteCounterIDs_);
-  }
-  return counterRef;
+  return counterIDs_.refOrEmplace(id, hw_, id, v6FlexCounterAction).first;
 }
 
 // used for testing purpose
