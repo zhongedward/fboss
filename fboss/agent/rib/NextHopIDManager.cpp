@@ -29,6 +29,8 @@ NextHopIDManager::NextHopToIDIter NextHopIDManager::getOrAllocateNextHopID(
   auto it = nextHopToID_.find(nextHop);
   if (it != nextHopToID_.end()) {
     idToNextHop_.at(it->second).refCount++;
+    XLOG(DBG3) << "[NextHop ID Manager] refCount++ nhId=" << it->second
+               << " nh=" << nextHop.addr().str();
     return it;
   }
 
@@ -43,6 +45,8 @@ NextHopIDManager::NextHopToIDIter NextHopIDManager::getOrAllocateNextHopID(
   auto [idItr, idInserted] =
       idToNextHop_.emplace(newID, NextHopEntry(nextHop, 1));
   CHECK(idInserted);
+  XLOG(DBG3) << "[NextHop ID Manager] allocated nhId=" << newID
+             << " nh=" << nextHop.addr().str();
   return nhItr;
 }
 
@@ -50,18 +54,15 @@ NextHopIDManager::NextHopIdSetIter NextHopIDManager::getOrAllocateNextHopSetID(
     const NextHopIDSet& nextHopIDSet) {
   auto it = nextHopIdSetToIDInfo_.find(nextHopIDSet);
   if (it != nextHopIdSetToIDInfo_.end()) {
-    // Existing NextHopIDSet found, increment reference count and return
-    // iterator
     it->second.count++;
+    XLOG(DBG3) << "[NextHop ID Manager] refCount++ setId=" << it->second.id
+               << " setSize=" << nextHopIDSet.size();
     return it;
   }
 
-  // New NextHopIDSet, allocate a new ID
   NextHopSetID newID = nextAvailableNextHopSetID_;
   nextAvailableNextHopSetID_ = NextHopSetID(nextAvailableNextHopSetID_ + 1);
 
-  // Check if the NextHopSetID is within the range [2^62, INT64_MAX]
-  // This is the range assigned to NextHopSetID
   CHECK(
       static_cast<int64_t>(newID) >= kNextHopSetIDStart &&
       static_cast<int64_t>(newID) < std::numeric_limits<int64_t>::max())
@@ -72,6 +73,8 @@ NextHopIDManager::NextHopIdSetIter NextHopIDManager::getOrAllocateNextHopSetID(
   auto [idSetMapItr, idSetMapInserted] =
       idToNextHopIdSet_.insert({newID, nextHopIDSet});
   CHECK(idSetMapInserted);
+  XLOG(DBG3) << "[NextHop ID Manager] allocated setId=" << newID
+             << " setSize=" << nextHopIDSet.size();
   return idSetInfoItr;
 }
 
@@ -118,11 +121,14 @@ bool NextHopIDManager::decrOrDeallocateNextHopByID(const NextHopID& nextHopID) {
   CHECK_GT(idIt->second.refCount, 0);
   idIt->second.refCount--;
   if (idIt->second.refCount == 0) {
+    XLOG(DBG3) << "[NextHop ID Manager] deallocated nhId=" << nextHopID
+               << " nh=" << idIt->second.nextHop.addr().str();
     auto erasedNh = nextHopToID_.erase(idIt->second.nextHop);
     CHECK_EQ(erasedNh, 1);
     idToNextHop_.erase(idIt);
     return true;
   }
+  XLOG(DBG3) << "[NextHop ID Manager] refCount-- nhId=" << nextHopID;
   return false;
 }
 
@@ -136,13 +142,14 @@ bool NextHopIDManager::decrOrDeallocateNextHopIDSet(
   CHECK_GT(it->second.count, 0);
   it->second.count--;
   if (it->second.count == 0) {
-    // Reference count reached 0, deallocate
+    XLOG(DBG3) << "[NextHop ID Manager] deallocated setId=" << it->second.id;
     auto erasedIdMap = idToNextHopIdSet_.erase(it->second.id);
     CHECK_EQ(erasedIdMap, 1);
     auto erasedIdInfo = nextHopIdSetToIDInfo_.erase(it->first);
     CHECK_EQ(erasedIdInfo, 1);
     return true;
   }
+  XLOG(DBG3) << "[NextHop ID Manager] refCount-- setId=" << it->second.id;
   return false;
 }
 
@@ -669,6 +676,29 @@ void NextHopIDManager::reconstructFromSwitchStateMaps(
   // Set next available IDs
   nextAvailableNextHopID_ = NextHopID(maxNextHopId + 1);
   nextAvailableNextHopSetID_ = NextHopSetID(maxNextHopSetId + 1);
+
+  XLOG(INFO) << "[NextHop ID Manager] reconstruction done:"
+             << " nhopCount=" << idToNextHop_.size()
+             << " setCount=" << idToNextHopIdSet_.size()
+             << " nextNhopId=" << nextAvailableNextHopID_
+             << " nextSetId=" << nextAvailableNextHopSetID_;
+  if (XLOG_IS_ON(DBG3)) {
+    for (const auto& [id, entry] : idToNextHop_) {
+      XLOG(DBG3) << "[NextHop ID Manager] reconstructed nhId=" << id
+                 << " nh=" << entry.nextHop.addr().str();
+    }
+    for (const auto& [setId, nhopIdSet] : idToNextHopIdSet_) {
+      std::string ids;
+      for (const auto& nhId : nhopIdSet) {
+        if (!ids.empty()) {
+          ids += ",";
+        }
+        ids += folly::to<std::string>(static_cast<int64_t>(nhId));
+      }
+      XLOG(DBG3) << "[NextHop ID Manager] reconstructed setId=" << setId
+                 << " nhIds={" << ids << "}";
+    }
+  }
 }
 
 void NextHopIDManager::addRouteForNamedNhg(

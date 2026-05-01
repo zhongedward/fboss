@@ -900,6 +900,8 @@ RibRouteTables::RouterIDToRouteTable RibRouteTables::constructRouteTables(
 }
 
 RoutingInformationBase::RoutingInformationBase() {
+  XLOG(INFO) << "NextHop ID manager "
+             << (FLAGS_enable_nexthop_id_manager ? "enabled" : "disabled");
   ribUpdateThread_ = std::make_unique<std::thread>([this] {
     initThread("ribUpdateThread");
     ribUpdateEventBase_.loopForever();

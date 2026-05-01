@@ -108,6 +108,12 @@ std::shared_ptr<SwitchState> SwitchStateNextHopIdUpdater::operator()(
     return state;
   }
 
+  XLOG(DBG3) << "[NextHop ID Manager] updater diff: nhopChanged=" << nhopChanged
+             << " setChanged=" << setChanged << " namedChanged=" << namedChanged
+             << " ribNhops=" << ribNhopMap.size()
+             << " ribSets=" << ribSetMap.size()
+             << " ribNamed=" << ribNameMap.size();
+
   // Apply only the maps that actually changed
   auto nextState = state;
   for (const auto& [matcher, _] : std::as_const(*state->getFibsInfoMap())) {
