@@ -275,7 +275,7 @@ TEST_F(NamedNextHopGroupRibTest, AddRouteWithNamedNhg) {
       facebook::network::toBinaryAddress(folly::IPAddress("10.0.0.0"));
   route.dest()->prefixLength() = 24;
   NamedRouteDestination namedDest;
-  namedDest.nextHopGroup_ref() = "nhg1";
+  namedDest.nextHopGroup() = "nhg1";
   route.namedRouteDestination() = namedDest;
 
   auto updater = sw_->getRouteUpdater();
@@ -297,7 +297,7 @@ TEST_F(NamedNextHopGroupRibTest, AddRouteWithNonExistentNhgFails) {
       facebook::network::toBinaryAddress(folly::IPAddress("10.0.0.0"));
   route.dest()->prefixLength() = 24;
   NamedRouteDestination namedDest;
-  namedDest.nextHopGroup_ref() = "nonexistent";
+  namedDest.nextHopGroup() = "nonexistent";
   route.namedRouteDestination() = namedDest;
 
   auto updater = sw_->getRouteUpdater();
@@ -324,7 +324,7 @@ TEST_F(NamedNextHopGroupRibTest, AddRouteWithBothNextHopsAndNamedNhgFails) {
   route.nextHops() = {nh};
 
   NamedRouteDestination namedDest;
-  namedDest.nextHopGroup_ref() = "nhg1";
+  namedDest.nextHopGroup() = "nhg1";
   route.namedRouteDestination() = namedDest;
 
   auto updater = sw_->getRouteUpdater();
@@ -349,7 +349,7 @@ TEST_F(NamedNextHopGroupRibTest, ReAddRouteWithDifferentNamedNhg) {
         facebook::network::toBinaryAddress(folly::IPAddress("10.0.0.0"));
     route.dest()->prefixLength() = 24;
     NamedRouteDestination namedDest;
-    namedDest.nextHopGroup_ref() = "nhg1";
+    namedDest.nextHopGroup() = "nhg1";
     route.namedRouteDestination() = namedDest;
     auto updater = sw_->getRouteUpdater();
     updater.addRoute(RouterID(0), ClientID::BGPD, route);
@@ -367,7 +367,7 @@ TEST_F(NamedNextHopGroupRibTest, ReAddRouteWithDifferentNamedNhg) {
         facebook::network::toBinaryAddress(folly::IPAddress("10.0.0.0"));
     route.dest()->prefixLength() = 24;
     NamedRouteDestination namedDest;
-    namedDest.nextHopGroup_ref() = "nhg2";
+    namedDest.nextHopGroup() = "nhg2";
     route.namedRouteDestination() = namedDest;
     auto updater = sw_->getRouteUpdater();
     updater.addRoute(RouterID(0), ClientID::BGPD, route);
@@ -396,7 +396,7 @@ TEST_F(NamedNextHopGroupRibTest, DeleteRouteWithNamedNhgCleansUpMapping) {
         facebook::network::toBinaryAddress(folly::IPAddress("10.0.0.0"));
     route.dest()->prefixLength() = 24;
     NamedRouteDestination namedDest;
-    namedDest.nextHopGroup_ref() = "nhg1";
+    namedDest.nextHopGroup() = "nhg1";
     route.namedRouteDestination() = namedDest;
     auto updater = sw_->getRouteUpdater();
     updater.addRoute(RouterID(0), ClientID::BGPD, route);
@@ -433,7 +433,7 @@ TEST_F(NamedNextHopGroupRibTest, SyncFibCleansUpNamedNhgMapping) {
         facebook::network::toBinaryAddress(folly::IPAddress("10.0.0.0"));
     route1.dest()->prefixLength() = 24;
     NamedRouteDestination namedDest1;
-    namedDest1.nextHopGroup_ref() = "nhg1";
+    namedDest1.nextHopGroup() = "nhg1";
     route1.namedRouteDestination() = namedDest1;
 
     UnicastRoute route2;
@@ -441,7 +441,7 @@ TEST_F(NamedNextHopGroupRibTest, SyncFibCleansUpNamedNhgMapping) {
         facebook::network::toBinaryAddress(folly::IPAddress("10.1.0.0"));
     route2.dest()->prefixLength() = 24;
     NamedRouteDestination namedDest2;
-    namedDest2.nextHopGroup_ref() = "nhg2";
+    namedDest2.nextHopGroup() = "nhg2";
     route2.namedRouteDestination() = namedDest2;
 
     auto updater = sw_->getRouteUpdater();
@@ -461,7 +461,7 @@ TEST_F(NamedNextHopGroupRibTest, SyncFibCleansUpNamedNhgMapping) {
         facebook::network::toBinaryAddress(folly::IPAddress("10.0.0.0"));
     route1.dest()->prefixLength() = 24;
     NamedRouteDestination namedDest1;
-    namedDest1.nextHopGroup_ref() = "nhg1";
+    namedDest1.nextHopGroup() = "nhg1";
     route1.namedRouteDestination() = namedDest1;
 
     auto updater = sw_->getRouteUpdater();
@@ -491,7 +491,7 @@ TEST_F(NamedNextHopGroupRibTest, DeleteNhgWithRouteReferenceBlocked) {
         facebook::network::toBinaryAddress(folly::IPAddress("10.0.0.0"));
     route.dest()->prefixLength() = 24;
     NamedRouteDestination namedDest;
-    namedDest.nextHopGroup_ref() = "nhg1";
+    namedDest.nextHopGroup() = "nhg1";
     route.namedRouteDestination() = namedDest;
     auto updater = sw_->getRouteUpdater();
     updater.addRoute(RouterID(0), ClientID::BGPD, route);
@@ -522,7 +522,7 @@ TEST_F(NamedNextHopGroupRibTest, DeleteNhgAfterRouteRemovedSucceeds) {
         facebook::network::toBinaryAddress(folly::IPAddress("10.0.0.0"));
     route.dest()->prefixLength() = 24;
     NamedRouteDestination namedDest;
-    namedDest.nextHopGroup_ref() = "nhg1";
+    namedDest.nextHopGroup() = "nhg1";
     route.namedRouteDestination() = namedDest;
     auto updater = sw_->getRouteUpdater();
     updater.addRoute(RouterID(0), ClientID::BGPD, route);
