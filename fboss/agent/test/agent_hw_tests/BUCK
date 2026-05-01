@@ -464,6 +464,7 @@ cpp_binary(
         ],
         versions = to_versions(sdk),
         deps = [
+            "fbsource//third-party/glog:glog",
             "fbsource//third-party/googletest:gtest",
             ":agent_hw_test_src",
             "//fboss/agent:main-bcm",
@@ -480,7 +481,6 @@ cpp_binary(
         ],
         external_deps = [
             "gflags",
-            "glog",
         ],
     )
     for sdk in BCM_SDKS
