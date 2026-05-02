@@ -1080,9 +1080,6 @@ service FbossCtrl extends phy.FbossCommonPhyCtrl {
   map<i32, InterfaceDetail> getAllInterfaces() throws (
     1: fboss.FbossBaseError error,
   );
-  // DEPRECATED: API will no longer work in agent
-  @cpp.ProcessInEbThreadUnsafe
-  void registerForNeighborChanged() throws (1: fboss.FbossBaseError error);
   list<string> getInterfaceList() throws (1: fboss.FbossBaseError error);
   /*
    * TODO (allwync): get rid of getRouteTable after agent code with thrift
@@ -1652,6 +1649,11 @@ service FbossCtrl extends phy.FbossCommonPhyCtrl {
     2: phy.PortComponent component,
     3: prbs.InterfacePrbsState state,
   ) throws (1: fboss.FbossBaseError error);
+
+  // Deprecated APIs
+  // registerForNeighborChanged is DEPRECATED: API will no longer work in agent
+  @cpp.ProcessInEbThreadUnsafe
+  void registerForNeighborChanged() throws (1: fboss.FbossBaseError error);
 }
 
 service NeighborListenerClient extends fb303.FacebookService {
