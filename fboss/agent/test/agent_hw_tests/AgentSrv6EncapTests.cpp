@@ -604,7 +604,10 @@ TYPED_TEST(AgentSrv6EncapTest, multipleSidListsSameNextHop) {
           this->kEncapRoutePrefix,
           this->kEncapRoutePrefixLen,
           ClientID::BGPD,
-          RouteNextHopEntry(nhopsA, AdminDistance::EBGP));
+          RouteNextHopEntry(
+              nhopsA,
+              AdminDistance::EBGP,
+              std::optional<RouteCounterID>("kSid0")));
 
       RouteNextHopSet nhopsB;
       nhopsB.insert(ResolvedNextHop(
@@ -623,21 +626,31 @@ TYPED_TEST(AgentSrv6EncapTest, multipleSidListsSameNextHop) {
           folly::IPAddressV6("2800:3::"),
           this->kEncapRoutePrefixLen,
           ClientID::BGPD,
-          RouteNextHopEntry(nhopsB, AdminDistance::EBGP));
+          RouteNextHopEntry(
+              nhopsB,
+              AdminDistance::EBGP,
+              std::optional<RouteCounterID>("kSid1")));
       routeUpdater.program();
     }
 
     // Verify both routes encap correctly while sharing nhop(0)
     auto egressPort = this->getEgressPort(ecmpHelper.nhop(0).portDesc);
     this->verifyEncapPacket(
-        {egressPort}, false /*ecnMarked*/, false /*isV4*/, {this->kSid0});
+        {egressPort},
+        false /*ecnMarked*/,
+        false /*isV4*/,
+        {this->kSid0},
+        std::nullopt,
+        std::nullopt,
+        "kSid0");
     this->verifyEncapPacket(
         {egressPort},
         false /*ecnMarked*/,
         false /*isV4*/,
         {this->kSid1},
         std::nullopt /*injectPort*/,
-        folly::IPAddress("2800:3::1"));
+        folly::IPAddress("2800:3::1"),
+        "kSid1");
 
     // Phase 2: Change route B to use nhop(1) instead of nhop(0)
     {
@@ -659,7 +672,10 @@ TYPED_TEST(AgentSrv6EncapTest, multipleSidListsSameNextHop) {
           folly::IPAddressV6("2800:3::"),
           this->kEncapRoutePrefixLen,
           ClientID::BGPD,
-          RouteNextHopEntry(nhopsBNew, AdminDistance::EBGP));
+          RouteNextHopEntry(
+              nhopsBNew,
+              AdminDistance::EBGP,
+              std::optional<RouteCounterID>("kSid1")));
       routeUpdater.program();
     }
   };
@@ -674,7 +690,13 @@ TYPED_TEST(AgentSrv6EncapTest, multipleSidListsSameNextHop) {
 
     // Route A encaps with kSid0 via nhop(0)
     this->verifyEncapPacket(
-        {egressPort0}, false /*ecnMarked*/, false /*isV4*/, {this->kSid0});
+        {egressPort0},
+        false /*ecnMarked*/,
+        false /*isV4*/,
+        {this->kSid0},
+        std::nullopt,
+        std::nullopt,
+        "kSid0");
 
     // Route B encaps with kSid1 via nhop(1)
     this->verifyEncapPacket(
@@ -683,7 +705,8 @@ TYPED_TEST(AgentSrv6EncapTest, multipleSidListsSameNextHop) {
         false /*isV4*/,
         {this->kSid1},
         std::nullopt /*injectPort*/,
-        folly::IPAddress("2800:3::1"));
+        folly::IPAddress("2800:3::1"),
+        "kSid1");
   };
   this->verifyAcrossWarmBoots(setup, verify);
 }
