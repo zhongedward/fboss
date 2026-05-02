@@ -59,12 +59,16 @@ class AgentSrv6EncapTest : public AgentHwTest {
           ProductionFeature::SRV6_ENCAP,
           ProductionFeature::L3_QOS,
           ProductionFeature::ECN,
-          ProductionFeature::LAG};
+          ProductionFeature::LAG,
+          ProductionFeature::ROUTE_COUNTERS,
+      };
     }
     return {
         ProductionFeature::SRV6_ENCAP,
         ProductionFeature::L3_QOS,
-        ProductionFeature::ECN};
+        ProductionFeature::ECN,
+        ProductionFeature::ROUTE_COUNTERS,
+    };
   }
 
   void setCmdLineFlagOverrides() const override {
