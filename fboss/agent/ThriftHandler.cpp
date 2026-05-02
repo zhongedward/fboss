@@ -2248,11 +2248,6 @@ void ThriftHandler::getLldpNeighbors(vector<LinkNeighborThrift>& results) {
   }
 }
 
-void ThriftHandler::async_eb_registerForNeighborChanged(
-    ThriftCallback<void> cb) {
-  throw FbossError("ThriftDuplex Neighbor Listener is no longer supported");
-}
-
 void ThriftHandler::startPktCapture(unique_ptr<CaptureInfo> info) {
   auto log = LOG_THRIFT_CALL_WITH_STATS(DBG1, sw_->stats());
   ensureConfigured(__func__);
@@ -3237,24 +3232,6 @@ void ThriftHandler::getActualSwitchDrainState(
         {static_cast<int64_t>(matcher.switchId()),
          switchSettings->getActualSwitchDrainState()});
   }
-}
-
-void ThriftHandler::addTeFlows(
-    std::unique_ptr<std::vector<FlowEntry>> /*teFlowEntries*/) {
-  auto log = LOG_THRIFT_CALL_WITH_STATS(DBG1, sw_->stats());
-  throw FbossError("addTeFlows is deprecated");
-}
-
-void ThriftHandler::deleteTeFlows(
-    std::unique_ptr<std::vector<TeFlow>> /*teFlows*/) {
-  auto log = LOG_THRIFT_CALL_WITH_STATS(DBG1, sw_->stats());
-  throw FbossError("deleteTeFlows is deprecated");
-}
-
-void ThriftHandler::syncTeFlows(
-    std::unique_ptr<std::vector<FlowEntry>> /*teFlowEntries*/) {
-  auto log = LOG_THRIFT_CALL_WITH_STATS(DBG1, sw_->stats());
-  throw FbossError("syncTeFlows is deprecated");
 }
 
 void ThriftHandler::getTeFlowTableDetails(

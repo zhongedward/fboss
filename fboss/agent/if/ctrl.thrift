@@ -20,7 +20,6 @@ include "fboss/lib/phy/phy.thrift"
 include "fboss/lib/phy/prbs.thrift"
 include "fboss/agent/hw/hardware_stats.thrift"
 include "thrift/annotation/python.thrift"
-include "thrift/annotation/cpp.thrift"
 include "thrift/annotation/thrift.thrift"
 
 @thrift.AllowLegacyMissingUris
@@ -1542,24 +1541,6 @@ service FbossCtrl extends phy.FbossCommonPhyCtrl {
   ) throws (1: fboss.FbossBaseError error);
 
   # Deprecated
-  void addTeFlows(1: list<FlowEntry> teFlowEntries) throws (
-    1: fboss.FbossBaseError error,
-    2: FbossTeUpdateError teFlowError,
-  );
-
-  # Deprecated
-  void deleteTeFlows(1: list<TeFlow> teFlows) throws (
-    1: fboss.FbossBaseError error,
-    2: FbossTeUpdateError teFlowError,
-  );
-
-  # Deprecated
-  void syncTeFlows(1: list<FlowEntry> teFlowEntries) throws (
-    1: fboss.FbossBaseError error,
-    2: FbossTeUpdateError teFlowError,
-  );
-
-  # Deprecated
   list<TeFlowDetails> getTeFlowTableDetails() throws (
     1: fboss.FbossBaseError error,
   );
@@ -1649,11 +1630,6 @@ service FbossCtrl extends phy.FbossCommonPhyCtrl {
     2: phy.PortComponent component,
     3: prbs.InterfacePrbsState state,
   ) throws (1: fboss.FbossBaseError error);
-
-  // Deprecated APIs
-  // registerForNeighborChanged is DEPRECATED: API will no longer work in agent
-  @cpp.ProcessInEbThreadUnsafe
-  void registerForNeighborChanged() throws (1: fboss.FbossBaseError error);
 }
 
 service NeighborListenerClient extends fb303.FacebookService {
