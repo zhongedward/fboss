@@ -408,8 +408,8 @@ class AgentSrv6EncapTest : public AgentHwTest {
             << "Route counter " << counterID << " not found";
         EXPECT_EVENTUALLY_GT(
             it->second.bytes().value_or(0), counterBytesBefore);
-        EXPECT_EVENTUALLY_GT(
-            it->second.packets().value_or(0), counterPacketsBefore);
+        EXPECT_EVENTUALLY_EQ(
+            it->second.packets().value_or(0), counterPacketsBefore + 1);
       });
     }
   }
