@@ -671,4 +671,56 @@ TEST_F(NamedNextHopGroupRibTest, BatchUpdateAndNewNhg) {
   EXPECT_EQ(nhops2->size(), 2);
 }
 
+TEST_F(NamedNextHopGroupRibTest, RouteEntryReportsNamedNhg) {
+  auto rib = sw_->getRib();
+
+  std::vector<std::pair<std::string, RouteNextHopSet>> groups;
+  groups.emplace_back("nhg1", makeResolvedNextHops({"1.1.1.10"}));
+  addOrUpdateGroups(groups);
+
+  // Add route with named NHG
+  {
+    UnicastRoute route;
+    route.dest()->ip() =
+        facebook::network::toBinaryAddress(folly::IPAddress("10.0.0.0"));
+    route.dest()->prefixLength() = 24;
+    NamedRouteDestination namedDest;
+    namedDest.nextHopGroup_ref() = "nhg1";
+    route.namedRouteDestination() = namedDest;
+    auto updater = sw_->getRouteUpdater();
+    updater.addRoute(RouterID(0), ClientID::BGPD, route);
+    updater.program();
+  }
+
+  // Verify the per-client entry has namedNextHopGroup set
+  auto managerCopy = rib->getNextHopIDManagerCopy();
+  EXPECT_TRUE(managerCopy->hasRoutesForNamedNhg("nhg1"));
+
+  // Verify ClientAndNextHops via toThriftLegacy includes namedRouteDestination
+  // by checking the route in the RIB
+  bool foundNhg = false;
+  auto ribRoutes = rib->getRouteTableDetails(RouterID(0));
+  for (const auto& rd : ribRoutes) {
+    auto prefix = folly::IPAddress::createNetwork(
+        fmt::format(
+            "{}/{}",
+            facebook::network::toIPAddress(*rd.dest()->ip()).str(),
+            *rd.dest()->prefixLength()));
+    if (prefix == folly::IPAddress::createNetwork("10.0.0.0/24")) {
+      // Check ClientAndNextHops.namedRouteDestination
+      for (const auto& clientNhops : *rd.nextHopMulti()) {
+        if (clientNhops.namedRouteDestination().has_value()) {
+          EXPECT_EQ(
+              *clientNhops.namedRouteDestination()->nextHopGroup_ref(), "nhg1");
+          foundNhg = true;
+        }
+      }
+      // Check RouteDetails.namedRouteDestination
+      ASSERT_TRUE(rd.namedRouteDestination().has_value());
+      EXPECT_EQ(*rd.namedRouteDestination()->nextHopGroup_ref(), "nhg1");
+    }
+  }
+  EXPECT_TRUE(foundNhg);
+}
+
 } // namespace facebook::fboss
