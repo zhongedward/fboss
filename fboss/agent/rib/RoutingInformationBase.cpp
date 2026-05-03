@@ -1481,16 +1481,86 @@ void RibRouteTables::addOrUpdateNamedNextHopGroups(
     const std::vector<std::pair<std::string, RouteNextHopSet>>& groups,
     const RibToSwitchStateFunction& ribToSwitchStateFunc,
     void* cookie) {
-  updateRibNamedNextHopGroups([&](NextHopIDManager* nextHopIDManager) {
-    for (const auto& [name, nextHopSet] : groups) {
-      nextHopIDManager->allocateNamedNextHopGroup(name, nextHopSet);
+  using RouteKey = std::pair<RouterID, ClientID>;
+  std::map<RouteKey, std::vector<RibRouteUpdater::RouteEntry>>
+      routesToReprogram;
+
+  {
+    auto lockedRouteTables = synchronizedRouteTables_.wlock();
+    if (!lockedRouteTables->nextHopIDManager) {
+      throw FbossError("NextHopIDManager not initialized");
     }
-  });
-  auto lockedRouteTables = synchronizedRouteTables_.rlock();
-  if (!lockedRouteTables->routerIDToRouteTable.empty()) {
-    auto vrf = lockedRouteTables->routerIDToRouteTable.begin()->first;
-    lockedRouteTables.unlock();
-    updateFib(resolver, vrf, ribToSwitchStateFunc, cookie);
+    auto* nhIdManager = lockedRouteTables->nextHopIDManager.get();
+
+    for (const auto& [name, nextHopSet] : groups) {
+      auto result = nhIdManager->allocateNamedNextHopGroup(name, nextHopSet);
+      if (result.isNew) {
+        continue;
+      }
+      const auto& affectedRoutes = nhIdManager->getRoutesForNamedNhg(name);
+      for (const auto& [rid, prefix] : affectedRoutes) {
+        auto vrfIt = lockedRouteTables->routerIDToRouteTable.find(rid);
+        if (vrfIt == lockedRouteTables->routerIDToRouteTable.end()) {
+          continue;
+        }
+        auto updateRouteNextHops = [&](const auto& route) {
+          for (const auto& [cid, entry] : route->getEntryForClients()) {
+            auto nhg = entry->getNamedNextHopGroup();
+            if (nhg.has_value() && *nhg == name) {
+              RouteNextHopEntry nhopEntry(
+                  RouteForwardAction::NEXTHOPS,
+                  entry->getAdminDistance(),
+                  entry->getCounterID(),
+                  entry->getClassID(),
+                  entry->getOverrideEcmpSwitchingMode(),
+                  entry->getOverrideNextHops());
+              nhopEntry.setNamedNextHopGroup(name);
+              routesToReprogram[{rid, ClientID(cid)}].emplace_back(
+                  prefix, nhopEntry);
+            }
+          }
+        };
+
+        if (prefix.first.isV4()) {
+          auto it = vrfIt->second.v4NetworkToRoute.exactMatch(
+              prefix.first.asV4(), prefix.second);
+          if (it != vrfIt->second.v4NetworkToRoute.end()) {
+            updateRouteNextHops(it->value());
+          }
+        } else {
+          auto it = vrfIt->second.v6NetworkToRoute.exactMatch(
+              prefix.first.asV6(), prefix.second);
+          if (it != vrfIt->second.v6NetworkToRoute.end()) {
+            updateRouteNextHops(it->value());
+          }
+        }
+      }
+    }
+  }
+
+  for (auto& [key, routes] : routesToReprogram) {
+    auto& [rid, clientID] = key;
+    std::vector<folly::CIDRNetwork> emptyDel;
+    update(
+        resolver,
+        rid,
+        clientID,
+        AdminDistance::MAX_ADMIN_DISTANCE,
+        routes,
+        emptyDel,
+        false,
+        "named nhg update",
+        ribToSwitchStateFunc,
+        cookie);
+  }
+
+  if (routesToReprogram.empty()) {
+    auto lockedRouteTables = synchronizedRouteTables_.rlock();
+    if (!lockedRouteTables->routerIDToRouteTable.empty()) {
+      auto vrf = lockedRouteTables->routerIDToRouteTable.begin()->first;
+      lockedRouteTables.unlock();
+      updateFib(resolver, vrf, ribToSwitchStateFunc, cookie);
+    }
   }
 }
 
