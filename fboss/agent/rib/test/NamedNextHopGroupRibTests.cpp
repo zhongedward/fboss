@@ -524,4 +524,151 @@ TEST_F(NamedNextHopGroupRibTest, DeleteNhgAfterRouteRemovedSucceeds) {
   EXPECT_FALSE(managerCopy->hasNamedNextHopGroup("nhg1"));
 }
 
+TEST_F(NamedNextHopGroupRibTest, UpdateNhgReprogramsRoutes) {
+  auto rib = sw_->getRib();
+
+  std::vector<std::pair<std::string, RouteNextHopSet>> groups;
+  groups.emplace_back("nhg1", makeResolvedNextHops({"1.1.1.10"}));
+  addOrUpdateGroups(groups);
+
+  auto prefix = folly::CIDRNetwork(folly::IPAddress("10.0.0.0"), 24);
+
+  // Add route referencing nhg1
+  {
+    UnicastRoute route;
+    route.dest()->ip() =
+        facebook::network::toBinaryAddress(folly::IPAddress("10.0.0.0"));
+    route.dest()->prefixLength() = 24;
+    NamedRouteDestination namedDest;
+    namedDest.nextHopGroup_ref() = "nhg1";
+    route.namedRouteDestination() = namedDest;
+    auto updater = sw_->getRouteUpdater();
+    updater.addRoute(RouterID(0), ClientID::BGPD, route);
+    updater.program();
+  }
+
+  // Update nhg1 with different nexthops
+  std::vector<std::pair<std::string, RouteNextHopSet>> updatedGroups;
+  updatedGroups.emplace_back("nhg1", makeResolvedNextHops({"2.2.2.10"}));
+  addOrUpdateGroups(updatedGroups);
+
+  // Verify the NHG was updated with new nexthops
+  auto managerCopy = rib->getNextHopIDManagerCopy();
+  auto nhops = managerCopy->getNextHopsForName("nhg1");
+  ASSERT_TRUE(nhops.has_value());
+  EXPECT_EQ(nhops->size(), 1);
+  EXPECT_EQ(
+      nhops->count(UnresolvedNextHop(folly::IPAddress("2.2.2.10"), 1)), 1);
+
+  // Route should still reference nhg1
+  EXPECT_EQ(
+      managerCopy->getRoutesForNamedNhg("nhg1").count({RouterID(0), prefix}),
+      1);
+}
+
+TEST_F(NamedNextHopGroupRibTest, UpdateNhgMultipleRoutesReprogrammed) {
+  auto rib = sw_->getRib();
+
+  std::vector<std::pair<std::string, RouteNextHopSet>> groups;
+  groups.emplace_back("nhg1", makeResolvedNextHops({"1.1.1.10"}));
+  addOrUpdateGroups(groups);
+
+  auto prefix1 = folly::CIDRNetwork(folly::IPAddress("10.0.0.0"), 24);
+  auto prefix2 = folly::CIDRNetwork(folly::IPAddress("10.1.0.0"), 24);
+
+  // Add two routes referencing nhg1
+  {
+    UnicastRoute route1;
+    route1.dest()->ip() =
+        facebook::network::toBinaryAddress(folly::IPAddress("10.0.0.0"));
+    route1.dest()->prefixLength() = 24;
+    NamedRouteDestination namedDest;
+    namedDest.nextHopGroup_ref() = "nhg1";
+    route1.namedRouteDestination() = namedDest;
+
+    UnicastRoute route2;
+    route2.dest()->ip() =
+        facebook::network::toBinaryAddress(folly::IPAddress("10.1.0.0"));
+    route2.dest()->prefixLength() = 24;
+    route2.namedRouteDestination() = namedDest;
+
+    auto updater = sw_->getRouteUpdater();
+    updater.addRoute(RouterID(0), ClientID::BGPD, route1);
+    updater.addRoute(RouterID(0), ClientID::BGPD, route2);
+    updater.program();
+  }
+
+  auto managerCopy = rib->getNextHopIDManagerCopy();
+  EXPECT_EQ(managerCopy->getRoutesForNamedNhg("nhg1").size(), 2);
+
+  // Update nhg1
+  std::vector<std::pair<std::string, RouteNextHopSet>> updatedGroups;
+  updatedGroups.emplace_back(
+      "nhg1", makeResolvedNextHops({"2.2.2.10", "1.1.1.10"}));
+  addOrUpdateGroups(updatedGroups);
+
+  // Both routes should still reference nhg1 with correct prefixes
+  managerCopy = rib->getNextHopIDManagerCopy();
+  const auto& routes = managerCopy->getRoutesForNamedNhg("nhg1");
+  EXPECT_EQ(routes.size(), 2);
+  EXPECT_EQ(routes.count({RouterID(0), prefix1}), 1);
+  EXPECT_EQ(routes.count({RouterID(0), prefix2}), 1);
+
+  // Verify NHG nexthops were updated
+  auto nhops = managerCopy->getNextHopsForName("nhg1");
+  ASSERT_TRUE(nhops.has_value());
+  EXPECT_EQ(nhops->size(), 2);
+}
+
+TEST_F(NamedNextHopGroupRibTest, BatchUpdateAndNewNhg) {
+  auto rib = sw_->getRib();
+
+  std::vector<std::pair<std::string, RouteNextHopSet>> groups;
+  groups.emplace_back("nhg1", makeResolvedNextHops({"1.1.1.10"}));
+  addOrUpdateGroups(groups);
+
+  auto prefix = folly::CIDRNetwork(folly::IPAddress("10.0.0.0"), 24);
+
+  // Add route referencing nhg1
+  {
+    UnicastRoute route;
+    route.dest()->ip() =
+        facebook::network::toBinaryAddress(folly::IPAddress("10.0.0.0"));
+    route.dest()->prefixLength() = 24;
+    NamedRouteDestination namedDest;
+    namedDest.nextHopGroup_ref() = "nhg1";
+    route.namedRouteDestination() = namedDest;
+    auto updater = sw_->getRouteUpdater();
+    updater.addRoute(RouterID(0), ClientID::BGPD, route);
+    updater.program();
+  }
+
+  // Batch: update nhg1 (has route) + add nhg2 (new, no routes)
+  std::vector<std::pair<std::string, RouteNextHopSet>> batchGroups;
+  batchGroups.emplace_back("nhg1", makeResolvedNextHops({"2.2.2.10"}));
+  batchGroups.emplace_back(
+      "nhg2", makeResolvedNextHops({"1.1.1.20", "2.2.2.20"}));
+  addOrUpdateGroups(batchGroups);
+
+  auto managerCopy = rib->getNextHopIDManagerCopy();
+
+  // nhg1 should be updated with new nexthops
+  auto nhops1 = managerCopy->getNextHopsForName("nhg1");
+  ASSERT_TRUE(nhops1.has_value());
+  EXPECT_EQ(nhops1->size(), 1);
+  EXPECT_EQ(
+      nhops1->count(UnresolvedNextHop(folly::IPAddress("2.2.2.10"), 1)), 1);
+
+  // Route should still reference nhg1
+  EXPECT_EQ(
+      managerCopy->getRoutesForNamedNhg("nhg1").count({RouterID(0), prefix}),
+      1);
+
+  // nhg2 should exist with its nexthops
+  EXPECT_TRUE(managerCopy->hasNamedNextHopGroup("nhg2"));
+  auto nhops2 = managerCopy->getNextHopsForName("nhg2");
+  ASSERT_TRUE(nhops2.has_value());
+  EXPECT_EQ(nhops2->size(), 2);
+}
+
 } // namespace facebook::fboss
