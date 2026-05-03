@@ -457,7 +457,6 @@ void RibRouteTables::update(
   updateRib(
       routerID,
       [&](auto& routeTable, auto* mySidTable, auto* nextHopIDManager) {
-        // Resolve named NHG references to actual nexthops (IP routes only)
         auto resolvedRoutes = toAddRoutes;
         if constexpr (std::is_same_v<RouteType, RibRouteUpdater::RouteEntry>) {
           if (nextHopIDManager) {
@@ -1478,14 +1477,21 @@ void RibRouteTables::updateFibNamedNextHopGroups(
 }
 
 void RibRouteTables::addOrUpdateNamedNextHopGroups(
+    const SwitchIdScopeResolver* resolver,
     const std::vector<std::pair<std::string, RouteNextHopSet>>& groups,
-    const std::function<void(const NextHopIDManager*)>& stateUpdateFn) {
+    const RibToSwitchStateFunction& ribToSwitchStateFunc,
+    void* cookie) {
   updateRibNamedNextHopGroups([&](NextHopIDManager* nextHopIDManager) {
     for (const auto& [name, nextHopSet] : groups) {
       nextHopIDManager->allocateNamedNextHopGroup(name, nextHopSet);
     }
   });
-  updateFibNamedNextHopGroups(stateUpdateFn);
+  auto lockedRouteTables = synchronizedRouteTables_.rlock();
+  if (!lockedRouteTables->routerIDToRouteTable.empty()) {
+    auto vrf = lockedRouteTables->routerIDToRouteTable.begin()->first;
+    lockedRouteTables.unlock();
+    updateFib(resolver, vrf, ribToSwitchStateFunc, cookie);
+  }
 }
 
 void RibRouteTables::deleteNamedNextHopGroups(
@@ -1502,8 +1508,10 @@ void RibRouteTables::deleteNamedNextHopGroups(
 }
 
 void RoutingInformationBase::addOrUpdateNamedNextHopGroups(
+    const SwitchIdScopeResolver* resolver,
     const std::vector<std::pair<std::string, RouteNextHopSet>>& groups,
-    const std::function<void(const NextHopIDManager*)>& stateUpdateFn) {
+    const RibToSwitchStateFunction& ribToSwitchStateFunc,
+    void* cookie) {
   // Pre-validate all groups before entering the RIB thread. If any group is
   // invalid, throw before any state is mutated. This matches the MySid batch
   // validation pattern (mySidFromEntry pre-validates all entries before
@@ -1518,7 +1526,8 @@ void RoutingInformationBase::addOrUpdateNamedNextHopGroups(
     }
   }
   updateStateInRibThread([&]() {
-    ribTables_.addOrUpdateNamedNextHopGroups(groups, stateUpdateFn);
+    ribTables_.addOrUpdateNamedNextHopGroups(
+        resolver, groups, ribToSwitchStateFunc, cookie);
   });
 }
 

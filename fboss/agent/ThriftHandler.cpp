@@ -3258,16 +3258,11 @@ void ThriftHandler::addOrUpdateNamedNextHopGroups(
             *group.nexthops(), true /* allowV6NonLinkLocal */));
   }
 
-  // RIB handles allocation + state update atomically on the RIB thread
+  // RIB handles allocation + route reprogramming on the RIB thread.
+  // RibToSwitchStateUpdater syncs FIB routes, mySids, and NHG ID maps
+  // to switch state in a single pass.
   rib->addOrUpdateNamedNextHopGroups(
-      groups, [this](const NextHopIDManager* mgr) {
-        SwitchStateNextHopIdUpdater updater(mgr);
-        sw_->updateStateBlocking(
-            "addOrUpdateNamedNextHopGroups",
-            [&updater](const std::shared_ptr<SwitchState>& state) {
-              return updater(state);
-            });
-      });
+      sw_->getScopeResolver(), groups, createRibToSwitchStateFunction(), sw_);
 }
 
 void ThriftHandler::deleteNamedNextHopGroups(
