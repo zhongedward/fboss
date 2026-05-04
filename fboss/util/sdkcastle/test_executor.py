@@ -8,13 +8,14 @@
 # pyre-unsafe
 
 import concurrent.futures
+import re
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, cast, Dict, List, Optional, Tuple
 
 from .config import SdkcastleSpec
-from .enums import RunMode
+from .enums import RunMode, TestRunnerMode
 from .test_runner import create_test_runner
 from .test_runner_report_generator import create_summary_report_generator
 
@@ -65,6 +66,8 @@ class TestExecutor:
             raise ValueError("No test specifications provided")
 
         if self.config.run_mode == RunMode.FULL_RUN:
+            if self.config.remote:
+                return self._execute_all_tests_remote()
             return self._execute_all_tests()
 
         raise ValueError(f"Unsupported run mode: {self.config.run_mode}")
@@ -201,6 +204,131 @@ class TestExecutor:
                 "log_file": str(log_file_path),
                 "return_code": -1,
             }
+
+    def _execute_all_tests_remote(self) -> Dict[str, Any]:
+        """Submit all tests as remote Sandcastle jobs via netcastle --sandcastle"""
+        if self.config.test_runner_mode != TestRunnerMode.META_INTERNAL:
+            raise ValueError(
+                "Remote execution is only supported with meta-internal "
+                "(netcastle) test runner mode"
+            )
+
+        commands = self._generate_all_test_commands()
+
+        if not commands:
+            return {
+                "status": "success",
+                "mode": "remote",
+                "total_jobs": 0,
+                "results": [],
+            }
+
+        self.log_dir = self._create_log_directory()
+        self._save_commands_to_file(commands, self.log_dir)
+
+        print(f"\nSubmitting {len(commands)} test commands as Sandcastle jobs...")
+
+        results = []
+        sandcastle_url_pattern = re.compile(r"Sandcastle job created: (\S+)")
+
+        for i, (cmd, log_filename) in enumerate(commands, 1):
+            print(f"\n[{i}/{len(commands)}] Submitting: {' '.join(cmd)}")
+
+            log_file_path = self.log_dir / log_filename
+            sandcastle_url = None
+
+            try:
+                result = subprocess.run(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=600,
+                )
+
+                with open(log_file_path, "w") as log_file:
+                    log_file.write(result.stdout)
+
+                url_match = sandcastle_url_pattern.search(result.stdout)
+                if url_match:
+                    sandcastle_url = url_match.group(1)
+
+                status = "submitted" if result.returncode == 0 else "failed"
+                if sandcastle_url:
+                    print(f"  Sandcastle job: {sandcastle_url}")
+                elif result.returncode != 0:
+                    print(f"  Failed with exit code {result.returncode}")
+                    print(f"  See log: {log_file_path}")
+
+                results.append(
+                    {
+                        "command": cmd,
+                        "status": status,
+                        "sandcastle_url": sandcastle_url,
+                        "log_file": str(log_file_path),
+                        "return_code": result.returncode,
+                    }
+                )
+
+            except subprocess.TimeoutExpired:
+                with open(log_file_path, "w") as log_file:
+                    log_file.write("Sandcastle submission timed out\n")
+                print("  Submission timed out")
+                results.append(
+                    {
+                        "command": cmd,
+                        "status": "timeout",
+                        "sandcastle_url": None,
+                        "log_file": str(log_file_path),
+                        "return_code": -1,
+                    }
+                )
+            except Exception as e:
+                with open(log_file_path, "w") as log_file:
+                    log_file.write(f"Error submitting: {str(e)}\n")
+                print(f"  Error: {e}")
+                results.append(
+                    {
+                        "command": cmd,
+                        "status": "error",
+                        "sandcastle_url": None,
+                        "log_file": str(log_file_path),
+                        "return_code": -1,
+                    }
+                )
+
+        submitted = sum(1 for r in results if r["status"] == "submitted")
+        failed = len(results) - submitted
+
+        print("\n=== Remote Execution Summary ===")
+        print(f"Total jobs: {len(results)}")
+        print(f"Submitted: {submitted}")
+        print(f"Failed to submit: {failed}")
+        print(f"Log directory: {self.log_dir}")
+
+        sandcastle_urls = [r["sandcastle_url"] for r in results if r["sandcastle_url"]]
+        if sandcastle_urls:
+            print("\n=== Sandcastle Job URLs ===")
+            for url in sandcastle_urls:
+                print(f"  {url}")
+
+        urls_file = self.log_dir / "sandcastle_job_urls.txt"
+        with open(urls_file, "w") as f:
+            for r in results:
+                f.write(f"Command: {' '.join(cast(List[str], r['command']))}\n")
+                f.write(f"Status: {r['status']}\n")
+                f.write(f"URL: {r['sandcastle_url'] or 'N/A'}\n\n")
+        print(f"\nJob URLs saved to: {urls_file}")
+
+        return {
+            "status": "success" if failed == 0 else "partial_failure",
+            "mode": "remote",
+            "total_jobs": len(results),
+            "submitted": submitted,
+            "failed": failed,
+            "results": results,
+            "log_directory": str(self.log_dir),
+        }
 
     def _generate_all_test_commands(self) -> List[Tuple[List[str], str]]:
         """Generate all test runner commands based on configuration"""
