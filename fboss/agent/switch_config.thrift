@@ -787,6 +787,8 @@ struct RedirectNextHop {
   // NextHop IP addresses
   1: string ip;
   2: optional i32 intfID;
+  3: optional common.TunnelType tunnelType;
+  4: optional string tunnelId;
 }
 
 // Redirect packet to a different nexthop

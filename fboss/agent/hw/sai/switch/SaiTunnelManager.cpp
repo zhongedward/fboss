@@ -19,6 +19,7 @@ namespace {
 sai_tunnel_type_t getSaiTunnelType(TunnelType type) {
   switch (type) {
     case TunnelType::IP_IN_IP:
+    case TunnelType::IP_IN_IP_ENCAP:
       return SAI_TUNNEL_TYPE_IPINIP;
     case TunnelType::SRV6_ENCAP:
       break;
