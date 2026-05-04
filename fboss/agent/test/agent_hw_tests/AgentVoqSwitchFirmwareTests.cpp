@@ -264,7 +264,7 @@ class AgentVoqSwitchIsolationFirmwareTest : public AgentVoqSwitchTest {
     FLAGS_sdk_reg_dump_path_prefix = sdkRegDumpPathPrefix_;
 
     if (isLinkDisableFirmware()) {
-      FLAGS_isolation_firmware_path = "/tmp/db/jericho3ai_a0/fi-2.4.11-GA.elf";
+      FLAGS_isolation_firmware_path = "/tmp/db/jericho3ai_a0/fi-2.4.13-GA.elf";
     } else {
       FLAGS_isolation_firmware_path = "/tmp/db/jericho3ai_a0/fi-2.4.0.1-GA.elf";
     }
@@ -553,12 +553,12 @@ class AgentVoqSwitchIsolationFirmwareUpgradeDownGrade
     config = this->clearFWConfig(config);
 
     // AgentVoqSwitchIsolationFirmwareUpgradeDownGrade/0.* run tests warmboot
-    // transition from fw version 2.4.0.1 to 2.4.11.
+    // transition from fw version 2.4.0.1 to 2.4.13.
     // AgentVoqSwitchIsolationFirmwareUpgradeDownGrade/1.* tests the reverse
     // transition.
     std::string fwPath;
     if (this->isLinkDisableFirmware()) {
-      fwPath = "/tmp/db/jericho3ai_a0/fi-2.4.11-GA.elf";
+      fwPath = "/tmp/db/jericho3ai_a0/fi-2.4.13-GA.elf";
     } else {
       fwPath = "/tmp/db/jericho3ai_a0/fi-2.4.0.1-GA.elf";
     }
@@ -576,11 +576,11 @@ class AgentVoqSwitchIsolationFirmwareUpgradeDownGrade
       const auto& configFileName = this->getAgentEnsemble()->configFileName();
       agentConfig.sw() = this->clearFWConfig(*agentConfig.sw());
 
-      // To test firmware transition on warmboot, if we chose 2.4.11 during cb,
+      // To test firmware transition on warmboot, if we chose 2.4.13 during cb,
       // configure 2.4.0.1 post wb and vice-versa.
       std::string fwPath;
       if (!this->isLinkDisableFirmware()) {
-        fwPath = "/tmp/db/jericho3ai_a0/fi-2.4.11-GA.elf";
+        fwPath = "/tmp/db/jericho3ai_a0/fi-2.4.13-GA.elf";
       } else {
         fwPath = "/tmp/db/jericho3ai_a0/fi-2.4.0.1-GA.elf";
       }
