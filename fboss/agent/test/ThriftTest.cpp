@@ -3567,7 +3567,7 @@ TEST_F(ThriftTest, routeCounterSetForNamedNhg) {
   auto route = std::make_unique<UnicastRoute>();
   *route->dest()->ip() = toBinaryAddress(IPAddress("2401::1"));
   *route->dest()->prefixLength() = 128;
-  route->namedRouteDestination()->nextHopGroup_ref() = "nhg_foo";
+  route->namedRouteDestination()->nextHopGroup() = "nhg_foo";
 
   auto client = static_cast<int16_t>(ClientID::BGPD);
   handler.addUnicastRoute(client, std::move(route));
@@ -3586,7 +3586,7 @@ TEST_F(ThriftTest, routeCounterNotSetForNamedNhgWhenDisabled) {
   auto route = std::make_unique<UnicastRoute>();
   *route->dest()->ip() = toBinaryAddress(IPAddress("2401::2"));
   *route->dest()->prefixLength() = 128;
-  route->namedRouteDestination()->nextHopGroup_ref() = "nhg_bar";
+  route->namedRouteDestination()->nextHopGroup() = "nhg_bar";
 
   auto client = static_cast<int16_t>(ClientID::BGPD);
   handler.addUnicastRoute(client, std::move(route));
@@ -3610,12 +3610,12 @@ TEST_F(ThriftTest, syncFibSetsRouteCounterForNamedNhg) {
   UnicastRoute route1;
   *route1.dest()->ip() = toBinaryAddress(IPAddress("2401::10"));
   *route1.dest()->prefixLength() = 128;
-  route1.namedRouteDestination()->nextHopGroup_ref() = "nhg_alpha";
+  route1.namedRouteDestination()->nextHopGroup() = "nhg_alpha";
 
   UnicastRoute route2;
   *route2.dest()->ip() = toBinaryAddress(IPAddress("2401::20"));
   *route2.dest()->prefixLength() = 128;
-  route2.namedRouteDestination()->nextHopGroup_ref() = "nhg_beta";
+  route2.namedRouteDestination()->nextHopGroup() = "nhg_beta";
 
   // Route without named NHG — counterID should not be set
   UnicastRoute route3;
@@ -3658,7 +3658,7 @@ TEST_F(ThriftTest, syncFibDoesNotSetRouteCounterForNamedNhgWhenDisabled) {
   UnicastRoute route1;
   *route1.dest()->ip() = toBinaryAddress(IPAddress("2401::40"));
   *route1.dest()->prefixLength() = 128;
-  route1.namedRouteDestination()->nextHopGroup_ref() = "nhg_gamma";
+  route1.namedRouteDestination()->nextHopGroup() = "nhg_gamma";
 
   routes->push_back(route1);
 
@@ -3699,7 +3699,7 @@ TEST_F(ThriftTest, routeCounterUpdatedWhenNamedNhgAddedToExistingRoute) {
   UnicastRoute route2;
   *route2.dest()->ip() = toBinaryAddress(IPAddress("2401::50"));
   *route2.dest()->prefixLength() = 128;
-  route2.namedRouteDestination()->nextHopGroup_ref() = "nhg_delta";
+  route2.namedRouteDestination()->nextHopGroup() = "nhg_delta";
   routes->push_back(route2);
   handler.syncFib(client, std::move(routes));
 
@@ -3722,7 +3722,7 @@ TEST_F(ThriftTest, routeCounterRemovedWhenNamedNhgRemovedFromRoute) {
   auto route1 = std::make_unique<UnicastRoute>();
   *route1->dest()->ip() = toBinaryAddress(IPAddress("2401::60"));
   *route1->dest()->prefixLength() = 128;
-  route1->namedRouteDestination()->nextHopGroup_ref() = "nhg_epsilon";
+  route1->namedRouteDestination()->nextHopGroup() = "nhg_epsilon";
   handler.addUnicastRoute(client, std::move(route1));
 
   auto state = sw_->getState();
@@ -3760,7 +3760,7 @@ TEST_F(ThriftTest, routeCounterUpdatedWhenNamedNhgChanges) {
   auto route1 = std::make_unique<UnicastRoute>();
   *route1->dest()->ip() = toBinaryAddress(IPAddress("2401::70"));
   *route1->dest()->prefixLength() = 128;
-  route1->namedRouteDestination()->nextHopGroup_ref() = "nhg_one";
+  route1->namedRouteDestination()->nextHopGroup() = "nhg_one";
   handler.addUnicastRoute(client, std::move(route1));
 
   auto state = sw_->getState();
@@ -3774,7 +3774,7 @@ TEST_F(ThriftTest, routeCounterUpdatedWhenNamedNhgChanges) {
   UnicastRoute route2;
   *route2.dest()->ip() = toBinaryAddress(IPAddress("2401::70"));
   *route2.dest()->prefixLength() = 128;
-  route2.namedRouteDestination()->nextHopGroup_ref() = "nhg_two";
+  route2.namedRouteDestination()->nextHopGroup() = "nhg_two";
   routes->push_back(route2);
   handler.syncFib(client, std::move(routes));
 
