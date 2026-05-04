@@ -540,7 +540,7 @@ TEST_F(NamedNextHopGroupRibTest, UpdateNhgReprogramsRoutes) {
         facebook::network::toBinaryAddress(folly::IPAddress("10.0.0.0"));
     route.dest()->prefixLength() = 24;
     NamedRouteDestination namedDest;
-    namedDest.nextHopGroup_ref() = "nhg1";
+    namedDest.nextHopGroup() = "nhg1";
     route.namedRouteDestination() = namedDest;
     auto updater = sw_->getRouteUpdater();
     updater.addRoute(RouterID(0), ClientID::BGPD, route);
@@ -583,7 +583,7 @@ TEST_F(NamedNextHopGroupRibTest, UpdateNhgMultipleRoutesReprogrammed) {
         facebook::network::toBinaryAddress(folly::IPAddress("10.0.0.0"));
     route1.dest()->prefixLength() = 24;
     NamedRouteDestination namedDest;
-    namedDest.nextHopGroup_ref() = "nhg1";
+    namedDest.nextHopGroup() = "nhg1";
     route1.namedRouteDestination() = namedDest;
 
     UnicastRoute route2;
@@ -636,7 +636,7 @@ TEST_F(NamedNextHopGroupRibTest, BatchUpdateAndNewNhg) {
         facebook::network::toBinaryAddress(folly::IPAddress("10.0.0.0"));
     route.dest()->prefixLength() = 24;
     NamedRouteDestination namedDest;
-    namedDest.nextHopGroup_ref() = "nhg1";
+    namedDest.nextHopGroup() = "nhg1";
     route.namedRouteDestination() = namedDest;
     auto updater = sw_->getRouteUpdater();
     updater.addRoute(RouterID(0), ClientID::BGPD, route);
@@ -685,7 +685,7 @@ TEST_F(NamedNextHopGroupRibTest, RouteEntryReportsNamedNhg) {
         facebook::network::toBinaryAddress(folly::IPAddress("10.0.0.0"));
     route.dest()->prefixLength() = 24;
     NamedRouteDestination namedDest;
-    namedDest.nextHopGroup_ref() = "nhg1";
+    namedDest.nextHopGroup() = "nhg1";
     route.namedRouteDestination() = namedDest;
     auto updater = sw_->getRouteUpdater();
     updater.addRoute(RouterID(0), ClientID::BGPD, route);
@@ -711,13 +711,13 @@ TEST_F(NamedNextHopGroupRibTest, RouteEntryReportsNamedNhg) {
       for (const auto& clientNhops : *rd.nextHopMulti()) {
         if (clientNhops.namedRouteDestination().has_value()) {
           EXPECT_EQ(
-              *clientNhops.namedRouteDestination()->nextHopGroup_ref(), "nhg1");
+              *clientNhops.namedRouteDestination()->nextHopGroup(), "nhg1");
           foundNhg = true;
         }
       }
       // Check RouteDetails.namedRouteDestination
       ASSERT_TRUE(rd.namedRouteDestination().has_value());
-      EXPECT_EQ(*rd.namedRouteDestination()->nextHopGroup_ref(), "nhg1");
+      EXPECT_EQ(*rd.namedRouteDestination()->nextHopGroup(), "nhg1");
     }
   }
   EXPECT_TRUE(foundNhg);

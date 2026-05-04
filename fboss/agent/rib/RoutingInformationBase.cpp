@@ -73,7 +73,7 @@ class RibIpRouteUpdate {
     if (route.namedRouteDestination().has_value()) {
       const auto& namedDest = *route.namedRouteDestination();
       if (namedDest.getType() == NamedRouteDestination::Type::nextHopGroup) {
-        const auto& nhgName = *namedDest.nextHopGroup_ref();
+        const auto& nhgName = *namedDest.nextHopGroup();
         if (!route.nextHops()->empty()) {
           throw FbossError(
               "Route cannot specify both nextHops and namedRouteDestination");
