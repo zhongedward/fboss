@@ -95,7 +95,7 @@ RouteDetails RouteFields<AddrT>::toRouteDetails(
     auto nhgName = bestEntry.second->getNamedNextHopGroup();
     if (nhgName.has_value()) {
       NamedRouteDestination namedDest;
-      namedDest.nextHopGroup_ref() = *nhgName;
+      namedDest.nextHopGroup() = *nhgName;
       rd.namedRouteDestination() = namedDest;
     }
   }

@@ -33,7 +33,7 @@ std::vector<ClientAndNextHops> RouteNextHopsMulti::toThriftLegacy() const {
     auto nhgName = srcPair.second->getNamedNextHopGroup();
     if (nhgName.has_value()) {
       NamedRouteDestination namedDest;
-      namedDest.nextHopGroup_ref() = *nhgName;
+      namedDest.nextHopGroup() = *nhgName;
       destPair.namedRouteDestination() = namedDest;
     }
     list.push_back(destPair);
