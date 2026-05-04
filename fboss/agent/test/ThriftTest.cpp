@@ -3540,6 +3540,23 @@ TEST_F(NamedNextHopGroupThriftTest, addRemoveAddGroup) {
   EXPECT_EQ(*result[0].name(), "group1");
 }
 
+TEST_F(NamedNextHopGroupThriftTest, rejectGroupNameExceedingMaxLength) {
+  ThriftHandler handler(sw_);
+
+  // 31 chars should succeed
+  auto groups = std::make_unique<std::vector<NamedNextHopGroup>>();
+  groups->push_back(
+      makeGroup(std::string(31, 'a'), {"2401:db00:2110:3001::2"}));
+  EXPECT_NO_THROW(handler.addOrUpdateNamedNextHopGroups(std::move(groups)));
+
+  // 32 chars should fail
+  auto groups2 = std::make_unique<std::vector<NamedNextHopGroup>>();
+  groups2->push_back(
+      makeGroup(std::string(32, 'b'), {"2401:db00:2110:3001::2"}));
+  EXPECT_THROW(
+      handler.addOrUpdateNamedNextHopGroups(std::move(groups2)), FbossError);
+}
+
 TEST_F(ThriftTest, routeCounterSetForNamedNhg) {
   FLAGS_enable_route_counters_for_named_nhg = true;
   SCOPE_EXIT {

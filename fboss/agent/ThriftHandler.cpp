@@ -3250,8 +3250,21 @@ void ThriftHandler::addOrUpdateNamedNextHopGroups(
     throw FbossError("RIB not initialized");
   }
 
+  /*
+   * Named NHG are associated with counters in HW. SAI impls
+   * reject counters with label length > 31 characters. So
+   * restrict it here.
+   */
+  static constexpr size_t kMaxGroupNameLen = 31;
   std::vector<std::pair<std::string, RouteNextHopSet>> groups;
   for (const auto& group : *nextHopGroups) {
+    if (group.name()->size() > kMaxGroupNameLen) {
+      throw FbossError(
+          "Named next-hop group name exceeds max length of ",
+          kMaxGroupNameLen,
+          " characters: ",
+          *group.name());
+    }
     groups.emplace_back(
         *group.name(),
         util::toRouteNextHopSet(
