@@ -4,6 +4,8 @@
 
 #include "fboss/agent/TxPacket.h"
 #include "fboss/agent/packet/PktFactory.h"
+#include "fboss/agent/state/RouteNextHop.h"
+#include "fboss/agent/state/RouteNextHopEntry.h"
 #include "fboss/agent/test/AgentHwTest.h"
 #include "fboss/agent/test/EcmpSetupHelper.h"
 #include "fboss/agent/test/TestUtils.h"
@@ -83,6 +85,80 @@ TEST_F(AgentLinkLocalForwardingTest, SingleLinkLocalNeighbor) {
         *ecmpHelper.nhop(PortDescriptor(portIds[0])).linkLocalNhopIp;
     getAgentEnsemble()->ensureSendPacketSwitched(
         makeTxPacket(folly::IPAddress(linkLocalDst), 8001 /* l4 dst port */));
+  };
+  verifyAcrossWarmBoots(setup, verify);
+}
+
+// Resolve link-local NDP entries on 4 ports, program an ECMP route to a
+// global v6 prefix (2001::/64) whose 4 nexthops are the link-local
+// neighbor address (one per port-interface), then pump randomized 5-tuple
+// traffic destined to 2001::* and assert load is balanced across the 4
+// ports within tolerance.
+TEST_F(AgentLinkLocalForwardingTest, EcmpLinkLocalNexthopsLoadBalanced) {
+  constexpr int kEcmpWidth = 4;
+  constexpr int kMaxDeviationPct = 25;
+  auto setup = [this]() {
+    auto portIds = masterLogicalInterfacePortIds();
+    CHECK_GE(portIds.size(), kEcmpWidth);
+    utility::EcmpSetupTargetedPorts<folly::IPAddressV6> ecmpHelper(
+        getProgrammedState(), getSw()->needL2EntryForNeighbor());
+    boost::container::flat_set<PortDescriptor> ports;
+    for (int i = 0; i < kEcmpWidth; ++i) {
+      ports.insert(PortDescriptor(portIds[i]));
+    }
+    applyNewState([&](const std::shared_ptr<SwitchState>& in) {
+      return ecmpHelper.resolveNextHops(in, ports, /*useLinkLocal=*/true);
+    });
+    RouteNextHopEntry::NextHopSet nhops;
+    for (const auto& portDesc : ports) {
+      auto nhop = ecmpHelper.nhop(portDesc);
+      nhops.insert(
+          ResolvedNextHop(*nhop.linkLocalNhopIp, nhop.intf, ECMP_WEIGHT));
+    }
+    auto updater = getSw()->getRouteUpdater();
+    updater.addRoute(
+        RouterID(0),
+        folly::IPAddressV6("2001::"),
+        64,
+        ClientID::BGPD,
+        RouteNextHopEntry(nhops, AdminDistance::EBGP));
+    updater.program();
+  };
+  auto verify = [this]() {
+    std::vector<PortDescriptor> ecmpPorts;
+    ecmpPorts.reserve(kEcmpWidth);
+    auto portIds = masterLogicalInterfacePortIds();
+    for (int i = 0; i < kEcmpWidth; ++i) {
+      ecmpPorts.emplace_back(portIds[i]);
+    }
+    std::function<std::map<PortID, HwPortStats>(const std::vector<PortID>&)>
+        getPortStatsFn = [this](const std::vector<PortID>& ids) {
+          return getSw()->getHwPortStats(ids);
+        };
+    utility::pumpTrafficAndVerifyLoadBalanced(
+        [this]() {
+          utility::pumpTraffic(
+              true /* isV6 */,
+              utility::getAllocatePktFn(getSw()),
+              utility::getSendPktFunc(getSw()),
+              getMacForFirstInterfaceWithPortsForTesting(getProgrammedState()),
+              getVlanIDForTx());
+        },
+        [this, &ecmpPorts]() {
+          auto ports = std::make_unique<std::vector<int32_t>>();
+          ports->reserve(ecmpPorts.size());
+          for (const auto& p : ecmpPorts) {
+            ports->push_back(static_cast<int32_t>(p.phyPortID()));
+          }
+          getSw()->clearPortStats(ports);
+        },
+        [&]() {
+          return utility::isLoadBalanced(
+              ecmpPorts,
+              std::vector<NextHopWeight>(kEcmpWidth, 1),
+              getPortStatsFn,
+              kMaxDeviationPct);
+        });
   };
   verifyAcrossWarmBoots(setup, verify);
 }
