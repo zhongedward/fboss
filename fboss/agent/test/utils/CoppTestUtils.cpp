@@ -103,75 +103,12 @@ cfg::Range getRange(uint32_t minimum, uint32_t maximum) {
 }
 
 uint16_t getCoppHighPriQueueId(const HwAsic* hwAsic) {
-  switch (hwAsic->getAsicType()) {
-    case cfg::AsicType::ASIC_TYPE_FAKE:
-    case cfg::AsicType::ASIC_TYPE_FAKE_NO_WARMBOOT:
-    case cfg::AsicType::ASIC_TYPE_MOCK:
-    case cfg::AsicType::ASIC_TYPE_TRIDENT2:
-    case cfg::AsicType::ASIC_TYPE_TOMAHAWK:
-    case cfg::AsicType::ASIC_TYPE_TOMAHAWK3:
-    case cfg::AsicType::ASIC_TYPE_TOMAHAWK4:
-    case cfg::AsicType::ASIC_TYPE_TOMAHAWK5:
-    case cfg::AsicType::ASIC_TYPE_TOMAHAWK6:
-    case cfg::AsicType::ASIC_TYPE_TOMAHAWKULTRA1:
-      return 9;
-    case cfg::AsicType::ASIC_TYPE_EBRO:
-    case cfg::AsicType::ASIC_TYPE_GARONNE:
-    case cfg::AsicType::ASIC_TYPE_YUBA:
-    case cfg::AsicType::ASIC_TYPE_JERICHO2:
-    case cfg::AsicType::ASIC_TYPE_JERICHO3:
-    case cfg::AsicType::ASIC_TYPE_JERICHO4:
-    case cfg::AsicType::ASIC_TYPE_QUMRAN4D:
-    case cfg::AsicType::ASIC_TYPE_G202X:
-      return 7;
-    case cfg::AsicType::ASIC_TYPE_CHENAB:
-    case cfg::AsicType::ASIC_TYPE_CHENAB2:
-      return 3;
-    case cfg::AsicType::ASIC_TYPE_ELBERT_8DD:
-    case cfg::AsicType::ASIC_TYPE_SANDIA_PHY:
-    case cfg::AsicType::ASIC_TYPE_AGERA3:
-    case cfg::AsicType::ASIC_TYPE_RAMON:
-    case cfg::AsicType::ASIC_TYPE_RAMON3:
-      throw FbossError(
-          "AsicType ", hwAsic->getAsicType(), " doesn't support queue feature");
-  }
-  throw FbossError("Unexpected AsicType ", hwAsic->getAsicType());
+  return hwAsic->getHiPriCpuQueueId();
 }
 
 uint16_t getCoppMidPriQueueId(const std::vector<const HwAsic*>& hwAsics) {
   auto hwAsic = checkSameAndGetAsic(hwAsics, FLAGS_switch_id_for_testing);
-  switch (hwAsic->getAsicType()) {
-    case cfg::AsicType::ASIC_TYPE_JERICHO3:
-    case cfg::AsicType::ASIC_TYPE_JERICHO4:
-    case cfg::AsicType::ASIC_TYPE_QUMRAN4D:
-      return kJ3CoppMidPriQueueId;
-    case cfg::AsicType::ASIC_TYPE_FAKE:
-    case cfg::AsicType::ASIC_TYPE_FAKE_NO_WARMBOOT:
-    case cfg::AsicType::ASIC_TYPE_MOCK:
-    case cfg::AsicType::ASIC_TYPE_TRIDENT2:
-    case cfg::AsicType::ASIC_TYPE_TOMAHAWK:
-    case cfg::AsicType::ASIC_TYPE_TOMAHAWK3:
-    case cfg::AsicType::ASIC_TYPE_TOMAHAWK4:
-    case cfg::AsicType::ASIC_TYPE_TOMAHAWK5:
-    case cfg::AsicType::ASIC_TYPE_TOMAHAWK6:
-    case cfg::AsicType::ASIC_TYPE_TOMAHAWKULTRA1:
-    case cfg::AsicType::ASIC_TYPE_EBRO:
-    case cfg::AsicType::ASIC_TYPE_GARONNE:
-    case cfg::AsicType::ASIC_TYPE_YUBA:
-    case cfg::AsicType::ASIC_TYPE_G202X:
-    case cfg::AsicType::ASIC_TYPE_JERICHO2:
-    case cfg::AsicType::ASIC_TYPE_CHENAB:
-    case cfg::AsicType::ASIC_TYPE_CHENAB2:
-      return kCoppMidPriQueueId;
-    case cfg::AsicType::ASIC_TYPE_ELBERT_8DD:
-    case cfg::AsicType::ASIC_TYPE_SANDIA_PHY:
-    case cfg::AsicType::ASIC_TYPE_AGERA3:
-    case cfg::AsicType::ASIC_TYPE_RAMON:
-    case cfg::AsicType::ASIC_TYPE_RAMON3:
-      throw FbossError(
-          "AsicType ", hwAsic->getAsicType(), " doesn't support queue feature");
-  }
-  throw FbossError("Unexpected AsicType ", hwAsic->getAsicType());
+  return hwAsic->getMidPriCpuQueueId();
 }
 
 uint16_t getCoppHighPriQueueId(const std::vector<const HwAsic*>& hwAsics) {
