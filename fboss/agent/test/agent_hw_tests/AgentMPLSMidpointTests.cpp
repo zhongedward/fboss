@@ -131,4 +131,17 @@ class AgentMPLSMidpointTest : public AgentHwTest {
   }
 };
 
+TEST_F(AgentMPLSMidpointTest, StaticMplsRoutePush) {
+  auto setup = [this]() {
+    auto config = initialConfig(*getAgentEnsemble());
+    configureStaticMplsPushRoute(config);
+    applyNewConfig(config);
+    resolveNextHop();
+  };
+
+  auto verify = [this]() { verifyMplsPushForwarding(); };
+
+  verifyAcrossWarmBoots(setup, verify);
+}
+
 } // namespace facebook::fboss
