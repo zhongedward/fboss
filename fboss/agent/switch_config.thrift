@@ -2466,6 +2466,7 @@ struct SwitchConfig {
     3: 0, // LINKLOCAL_ROUTE
     4: 0, // REMOTE_INTERFACE_ROUTE
     1: 1, // STATIC_ROUTE
+    800: 2, // TE_AGENT
     786: 10, // OPENR
     0: 20, // BGPD
     700: 255, // STATIC_INTERNAL

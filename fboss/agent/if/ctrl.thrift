@@ -37,6 +37,7 @@ const i32 NO_VLAN = -1;
 enum AdminDistance {
   DIRECTLY_CONNECTED = 0,
   STATIC_ROUTE = 1,
+  TE_AGENT = 2,
   OPENR = 10,
   EBGP = 20,
   IBGP = 200,
