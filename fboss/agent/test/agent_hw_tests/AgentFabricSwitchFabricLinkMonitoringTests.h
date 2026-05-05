@@ -11,6 +11,8 @@ namespace facebook::fboss {
 // Requires DUAL_STAGE_L1 fabric node role for FabricLinkMonitoringManager.
 class AgentFabricSwitchFabricLinkMonitoringTest : public AgentHwTest {
  public:
+  cfg::SwitchConfig initialConfig(const AgentEnsemble& ensemble) const override;
+
   void SetUp() override;
 
  protected:
@@ -29,6 +31,8 @@ class AgentFabricSwitchFabricLinkMonitoringTest : public AgentHwTest {
   void setCmdLineFlagOverrides() const override;
 
   // initialConfig helpers
+  void addFabricPorts(cfg::SwitchConfig& config, const AgentEnsemble& ensemble)
+      const;
   void addDsfNodes(
       cfg::SwitchConfig& config,
       const std::map<int64_t, cfg::SwitchInfo>& switchIdToSwitchInfo,

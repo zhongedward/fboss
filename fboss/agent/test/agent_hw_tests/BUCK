@@ -85,6 +85,7 @@ cpp_library(
         "//fboss/agent:load_agent_config",
         "//fboss/agent:packet",
         "//fboss/agent:switch_config-cpp2-types",
+        "//fboss/agent:utils",
         "//fboss/agent/hw:hw_resource_stats_publisher",
         "//fboss/agent/hw:hw_switch_fb303_stats",
         "//fboss/agent/hw/test:config_factory",

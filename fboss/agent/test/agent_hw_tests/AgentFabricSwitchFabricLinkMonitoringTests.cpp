@@ -3,8 +3,14 @@
 #include "fboss/agent/test/agent_hw_tests/AgentFabricSwitchFabricLinkMonitoringTests.h"
 
 #include "fboss/agent/AgentFeatures.h"
+#include "fboss/agent/Utils.h"
 #include "fboss/agent/gen-cpp2/switch_config_types.h"
+#include "fboss/agent/hw/test/ConfigFactory.h"
 #include "fboss/agent/test/utils/DsfConfigUtils.h"
+#include "fboss/agent/test/utils/FabricTestUtils.h"
+#include "fboss/agent/test/utils/PortTestUtils.h"
+
+#include <folly/testing/TestUtil.h>
 
 namespace facebook::fboss {
 
@@ -31,6 +37,7 @@ constexpr int kNumFabricPortsPerAsic = 256;
 
 // Switch ID ranges - FDSW starts at 0 so the default test switch IDs
 // fall within the FDSW range without requiring switch ID overrides.
+// RDSW and SDSW ranges follow after the FDSW range.
 // FDSW: 40 switches * 4 IDs = 160 (0-159)
 // RDSW: 128 switches * 4 IDs = 512 (160-671)
 // SDSW: 128 switches * 4 IDs = 512 (672-1183)
@@ -82,29 +89,96 @@ void AgentFabricSwitchFabricLinkMonitoringTest::SetUp() {
   }
 }
 
-void AgentFabricSwitchFabricLinkMonitoringTest::setCmdLineFlagOverrides()
-    const {
-  AgentHwTest::setCmdLineFlagOverrides();
-  FLAGS_hide_fabric_ports = false;
-  FLAGS_enable_fabric_link_monitoring = true;
+cfg::SwitchConfig AgentFabricSwitchFabricLinkMonitoringTest::initialConfig(
+    const AgentEnsemble& ensemble) const {
+  cfg::SwitchConfig config;
+
+  // Switch settings with hardcoded switch IDs to ensure consistency
+  // between cold boot and warm boot.
+  config.switchSettings()->switchType() = cfg::SwitchType::FABRIC;
+  config.switchSettings()->switchId() = 0;
+
+  std::map<int64_t, cfg::SwitchInfo> switchIdToSwitchInfo;
+
+  cfg::SwitchInfo switchInfo0;
+  switchInfo0.switchType() = cfg::SwitchType::FABRIC;
+  switchInfo0.asicType() = cfg::AsicType::ASIC_TYPE_RAMON3;
+  switchInfo0.switchIndex() = 0;
+  cfg::Range64 portIdRange0;
+  portIdRange0.minimum() = 0;
+  portIdRange0.maximum() = 2047;
+  switchInfo0.portIdRange() = portIdRange0;
+  switchInfo0.connectionHandle() = "15:00";
+  cfg::SystemPortRanges sysPortRanges0;
+  switchInfo0.systemPortRanges() = sysPortRanges0;
+  switchIdToSwitchInfo[0] = switchInfo0;
+
+  cfg::SwitchInfo switchInfo1;
+  switchInfo1.switchType() = cfg::SwitchType::FABRIC;
+  switchInfo1.asicType() = cfg::AsicType::ASIC_TYPE_RAMON3;
+  switchInfo1.switchIndex() = 1;
+  cfg::Range64 portIdRange1;
+  portIdRange1.minimum() = 2048;
+  portIdRange1.maximum() = 4095;
+  switchInfo1.portIdRange() = portIdRange1;
+  switchInfo1.connectionHandle() = "16:00";
+  cfg::SystemPortRanges sysPortRanges1;
+  switchInfo1.systemPortRanges() = sysPortRanges1;
+  switchIdToSwitchInfo[2] = switchInfo1;
+
+  config.switchSettings()->switchIdToSwitchInfo() = switchIdToSwitchInfo;
+
+  addFabricPorts(config, ensemble);
+  addDsfNodes(config, switchIdToSwitchInfo, ensemble);
+  configureExpectedNeighborReachability(config);
+
+  XLOG(DBG2) << "Configured DSF nodes: " << kNumRdswSwitches << " RDSWs, "
+             << kNumFdswSwitches << " FDSWs, " << kNumSdswSwitches << " SDSWs";
+
+  return config;
 }
 
-void AgentFabricSwitchFabricLinkMonitoringTest::overrideTestEnsembleInitInfo(
-    TestEnsembleInitInfo& initInfo) const {
-  // Override DSF nodes to ensure the system is detected as a dual stage FDSW.
-  // The platform config provides the correct switch IDs (0 and 2), but does
-  // not include DSF nodes with fabricLevel=2 needed for isDualStage() to
-  // return true during platform init. We add a minimal SDSW dummy node here
-  // along with local FDSW nodes with fabricLevel=1 for DUAL_STAGE_L1 detection.
-  std::map<int64_t, cfg::DsfNode> dsfNodes;
-  dsfNodes[0] =
-      utility::makeFabricDsfNode(0, "fdsw001", utility::kL1FabricLevel);
-  dsfNodes[2] =
-      utility::makeFabricDsfNode(2, "fdsw001", utility::kL1FabricLevel);
-  // Dummy SDSW node with fabricLevel=2 to make isDualStage() return true
-  dsfNodes[kSdswSwitchIdStart] = utility::makeFabricDsfNode(
-      kSdswSwitchIdStart, "sdsw001", utility::kL2FabricLevel);
-  initInfo.overrideDsfNodes = std::move(dsfNodes);
+void AgentFabricSwitchFabricLinkMonitoringTest::addFabricPorts(
+    cfg::SwitchConfig& config,
+    const AgentEnsemble& ensemble) const {
+  const auto* platformMapping = ensemble.getPlatformMapping();
+  auto switchIds = ensemble.getHwAsicTable()->getSwitchIDs();
+  CHECK(!switchIds.empty()) << "No switch IDs found";
+  auto asic = ensemble.getHwAsicTable()->getHwAsic(*switchIds.begin());
+
+  const auto& platformPorts = platformMapping->getPlatformPorts();
+  const auto& portToDefaultProfileID = utility::getPortToDefaultProfileIDMap();
+  auto desiredLoopbackMode = cfg::PortLoopbackMode::NONE;
+  if (auto iter = asic->desiredLoopbackModes().find(cfg::PortType::FABRIC_PORT);
+      iter != asic->desiredLoopbackModes().end()) {
+    desiredLoopbackMode = iter->second;
+  }
+
+  for (const auto& [portIdInt, platformPort] : platformPorts) {
+    if (*platformPort.mapping()->portType() != cfg::PortType::FABRIC_PORT) {
+      continue;
+    }
+    auto profileIter = portToDefaultProfileID.find(PortID(portIdInt));
+    if (profileIter == portToDefaultProfileID.end()) {
+      continue;
+    }
+    auto profileId = profileIter->second;
+
+    cfg::Port portCfg;
+    portCfg.logicalID() = portIdInt;
+    portCfg.name() = *platformPort.mapping()->name();
+    portCfg.portType() = cfg::PortType::FABRIC_PORT;
+    portCfg.state() = cfg::PortState::ENABLED;
+    portCfg.loopbackMode() = desiredLoopbackMode;
+    portCfg.profileID() = profileId;
+    portCfg.speed() = utility::getSpeed(profileId);
+    portCfg.ingressVlan() = 0;
+    portCfg.maxFrameSize() = 0;
+    portCfg.routable() = true;
+    portCfg.parserType() = cfg::ParserType::L3;
+
+    config.ports()->push_back(portCfg);
+  }
 }
 
 void AgentFabricSwitchFabricLinkMonitoringTest::addDsfNodes(
@@ -227,6 +301,31 @@ void AgentFabricSwitchFabricLinkMonitoringTest::
     }
     portIndex++;
   }
+}
+
+void AgentFabricSwitchFabricLinkMonitoringTest::setCmdLineFlagOverrides()
+    const {
+  AgentHwTest::setCmdLineFlagOverrides();
+  FLAGS_hide_fabric_ports = false;
+  FLAGS_enable_fabric_link_monitoring = true;
+}
+
+void AgentFabricSwitchFabricLinkMonitoringTest::overrideTestEnsembleInitInfo(
+    TestEnsembleInitInfo& initInfo) const {
+  // Override DSF nodes to ensure the system is detected as a dual stage FDSW.
+  // The platform config provides the correct switch IDs (0 and 2), but does
+  // not include DSF nodes with fabricLevel=2 needed for isDualStage() to
+  // return true during platform init. We add a minimal SDSW dummy node here
+  // along with local FDSW nodes with fabricLevel=1 for DUAL_STAGE_L1 detection.
+  std::map<int64_t, cfg::DsfNode> dsfNodes;
+  dsfNodes[0] =
+      utility::makeFabricDsfNode(0, "fdsw001", utility::kL1FabricLevel);
+  dsfNodes[2] =
+      utility::makeFabricDsfNode(2, "fdsw001", utility::kL1FabricLevel);
+  // Dummy SDSW node with fabricLevel=2 to make isDualStage() return true
+  dsfNodes[kSdswSwitchIdStart] = utility::makeFabricDsfNode(
+      kSdswSwitchIdStart, "sdsw001", utility::kL2FabricLevel);
+  initInfo.overrideDsfNodes = std::move(dsfNodes);
 }
 
 } // namespace facebook::fboss
