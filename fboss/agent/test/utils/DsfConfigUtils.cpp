@@ -174,8 +174,7 @@ std::pair<int, cfg::DsfNode> getRemoteFabricNodeCfg(
   return {remoteSwitchId, fabricNode};
 }
 
-void addFabricDsfNode(
-    cfg::SwitchConfig& config,
+cfg::DsfNode makeFabricDsfNode(
     int64_t switchId,
     const std::string& name,
     int fabricLevel,
@@ -188,7 +187,18 @@ void addFabricDsfNode(
   node.fabricLevel() = fabricLevel;
   node.platformType() = platformType;
   node.asicType() = asicType;
-  (*config.dsfNodes())[switchId] = node;
+  return node;
+}
+
+void addFabricDsfNode(
+    cfg::SwitchConfig& config,
+    int64_t switchId,
+    const std::string& name,
+    int fabricLevel,
+    PlatformType platformType,
+    cfg::AsicType asicType) {
+  (*config.dsfNodes())[switchId] =
+      makeFabricDsfNode(switchId, name, fabricLevel, platformType, asicType);
 }
 
 std::map<PortID, std::pair<int64_t, int64_t>> collectFabricLinkMonitoringStats(

@@ -35,6 +35,14 @@ std::pair<int, cfg::DsfNode> getRemoteFabricNodeCfg(
 
 // DSF Fabric link monitoring test utilities
 
+// Create a fabric DSF node
+cfg::DsfNode makeFabricDsfNode(
+    int64_t switchId,
+    const std::string& name,
+    int fabricLevel,
+    PlatformType platformType = PlatformType::PLATFORM_MERU800BFA,
+    cfg::AsicType asicType = cfg::AsicType::ASIC_TYPE_RAMON3);
+
 // Add a fabric DSF node to the config
 void addFabricDsfNode(
     cfg::SwitchConfig& config,

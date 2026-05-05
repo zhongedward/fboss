@@ -19,6 +19,12 @@ class AgentFabricSwitchFabricLinkMonitoringTest : public AgentHwTest {
     return {ProductionFeature::FABRIC};
   }
 
+  // Override to ensure DUAL_STAGE_L1 fabric node role is set during
+  // HwAsicTable creation. Required because HwAsicTable is created before
+  // initialConfig() is called.
+  void overrideTestEnsembleInitInfo(
+      TestEnsembleInitInfo& initInfo) const override;
+
  private:
   void setCmdLineFlagOverrides() const override;
 };
