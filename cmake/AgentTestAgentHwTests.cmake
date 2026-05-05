@@ -38,6 +38,7 @@ target_link_libraries(agent_qos_test_src
 
 # VOQ/DSF test library - tests related to VOQ switches and distributed switch fabric
 add_library(agent_voq_test_src
+  fboss/agent/test/agent_hw_tests/AgentFabricSwitchFabricLinkMonitoringTests.cpp
   fboss/agent/test/agent_hw_tests/AgentFabricSwitchTests.cpp
   fboss/agent/test/agent_hw_tests/AgentVoqConditionalEntropyTests.cpp
   fboss/agent/test/agent_hw_tests/AgentVoqSwitchFabricLinkMonitoringTests.cpp

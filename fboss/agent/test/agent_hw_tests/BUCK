@@ -54,6 +54,7 @@ cpp_library(
 cpp_library(
     name = "agent_voq_test_src",
     srcs = [
+        "AgentFabricSwitchFabricLinkMonitoringTests.cpp",
         "AgentFabricSwitchTests.cpp",
         "AgentVoqConditionalEntropyTests.cpp",
         "AgentVoqSwitchFabricLinkMonitoringTests.cpp",
@@ -66,6 +67,7 @@ cpp_library(
         "AgentVoqSwitchWithMultipleDsfNodesTests.cpp",
     ],
     headers = [
+        "AgentFabricSwitchFabricLinkMonitoringTests.h",
         "AgentVoqSwitchFabricLinkMonitoringTests.h",
         "AgentVoqSwitchFullScaleDsfTests.h",
         "AgentVoqSwitchTests.h",
