@@ -32,7 +32,23 @@ class TunnelStoreTest : public SaiStoreTest {
         SAI_TUNNEL_DSCP_MODE_UNIFORM_MODEL};
     SaiIpInIpTunnelTraits::Attributes::DecapEcnMode ecnMode{
         SAI_TUNNEL_DECAP_ECN_MODE_STANDARD};
-    return {type, underlay, overlay, ttlMode, dscpMode, ecnMode};
+    return {
+        type,
+        underlay,
+        overlay,
+        ttlMode,
+        dscpMode,
+        ecnMode,
+        std::nullopt,
+        std::nullopt,
+        std::nullopt
+#if defined(TAJO_SDK_VERSION_25_11_4210)
+        ,
+        std::nullopt,
+        std::nullopt,
+        std::nullopt
+#endif
+    };
   }
   TunnelSaiId createTunnel() const {
     auto& tunnelApi = saiApiTable->tunnelApi();
@@ -87,7 +103,17 @@ TEST_F(TunnelStoreTest, loadTunnel) {
       42,
       SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL,
       SAI_TUNNEL_DSCP_MODE_UNIFORM_MODEL,
-      SAI_TUNNEL_DECAP_ECN_MODE_STANDARD};
+      SAI_TUNNEL_DECAP_ECN_MODE_STANDARD,
+      folly::IPAddress("0.0.0.0"),
+      0,
+      0
+#if defined(TAJO_SDK_VERSION_25_11_4210)
+      ,
+      SAI_TUNNEL_PEER_MODE_P2MP,
+      folly::IPAddress("0.0.0.0"),
+      0
+#endif
+  };
   auto got = store.get(k);
   EXPECT_EQ(got->adapterKey(), tunnelId);
   EXPECT_EQ(
@@ -132,8 +158,23 @@ TEST_F(TunnelStoreTest, tunnelTermLoadCtor) {
 }
 
 TEST_F(TunnelStoreTest, tunnelCreateCtor) {
-  SaiIpInIpTunnelTraits::AdapterHostKey k{
-      SAI_TUNNEL_TYPE_IPINIP, 42, 42, std::nullopt, std::nullopt, std::nullopt};
+  SaiIpInIpTunnelTraits::CreateAttributes k{
+      SAI_TUNNEL_TYPE_IPINIP,
+      42,
+      42,
+      std::nullopt,
+      std::nullopt,
+      std::nullopt,
+      std::nullopt,
+      std::nullopt,
+      std::nullopt
+#if defined(TAJO_SDK_VERSION_25_11_4210)
+      ,
+      std::nullopt,
+      std::nullopt,
+      std::nullopt
+#endif
+  };
   SaiObject<SaiIpInIpTunnelTraits> obj =
       createObj<SaiIpInIpTunnelTraits>(k, k, 0);
   EXPECT_EQ(GET_ATTR(IpInIpTunnel, OverlayInterface, obj.attributes()), 42);
@@ -268,7 +309,17 @@ TEST_F(TunnelStoreTest, tunnelSetTtl) {
       42,
       SAI_TUNNEL_TTL_MODE_PIPE_MODEL,
       SAI_TUNNEL_DSCP_MODE_UNIFORM_MODEL,
-      SAI_TUNNEL_DECAP_ECN_MODE_STANDARD};
+      SAI_TUNNEL_DECAP_ECN_MODE_STANDARD,
+      std::nullopt,
+      std::nullopt,
+      std::nullopt
+#if defined(TAJO_SDK_VERSION_25_11_4210)
+      ,
+      std::nullopt,
+      std::nullopt,
+      std::nullopt
+#endif
+  };
   obj.setAttributes(newAttrs);
   EXPECT_EQ(
       GET_OPT_ATTR(IpInIpTunnel, DecapTtlMode, obj.attributes()),
