@@ -6413,17 +6413,31 @@ shared_ptr<IpTunnel> ThriftConfigApplier::createIpInIpTunnel(
   } else {
     tunnel->setEcnMode(cfg::TunnelMode::UNIFORM);
   }
-  // IP in IP tunnel decap: dst ip is the src of Tunnel state
-  // (state default: encap)
-  tunnel->setSrcIP(folly::IPAddressV6(*config.dstIp()));
-  if (config.srcIp().has_value()) {
-    tunnel->setDstIP(folly::IPAddressV6(*config.srcIp()));
-  }
-  if (config.dstIpMask().has_value()) {
-    tunnel->setSrcIPMask(folly::IPAddressV6(*config.dstIpMask()));
-  }
-  if (config.srcIpMask().has_value()) {
-    tunnel->setDstIPMask(folly::IPAddressV6(*config.srcIpMask()));
+  if (tunnel->getType() == TunnelType::IP_IN_IP_ENCAP) {
+    // Encap: src/dst IPs map directly to tunnel state
+    if (config.srcIp().has_value()) {
+      tunnel->setSrcIP(folly::IPAddressV6(*config.srcIp()));
+    }
+    tunnel->setDstIP(folly::IPAddressV6(*config.dstIp()));
+    if (config.srcIpMask().has_value()) {
+      tunnel->setSrcIPMask(folly::IPAddressV6(*config.srcIpMask()));
+    }
+    if (config.dstIpMask().has_value()) {
+      tunnel->setDstIPMask(folly::IPAddressV6(*config.dstIpMask()));
+    }
+  } else {
+    // Decap: config dstIp is the tunnel term match (stored as srcIP in state),
+    // config srcIp is the outer src filter (stored as dstIP in state)
+    tunnel->setSrcIP(folly::IPAddressV6(*config.dstIp()));
+    if (config.srcIp().has_value()) {
+      tunnel->setDstIP(folly::IPAddressV6(*config.srcIp()));
+    }
+    if (config.dstIpMask().has_value()) {
+      tunnel->setSrcIPMask(folly::IPAddressV6(*config.dstIpMask()));
+    }
+    if (config.srcIpMask().has_value()) {
+      tunnel->setDstIPMask(folly::IPAddressV6(*config.srcIpMask()));
+    }
   }
 
   return tunnel;
