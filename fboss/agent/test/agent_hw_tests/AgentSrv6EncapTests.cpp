@@ -209,7 +209,7 @@ class AgentSrv6EncapTest : public AgentHwTest {
         folly::IPAddressV6("2901::"),
         48,
         ClientID::OPENR,
-        RouteNextHopEntry(igpNhopsA, AdminDistance::MAX_ADMIN_DISTANCE));
+        RouteNextHopEntry(igpNhopsA, AdminDistance::OPENR));
 
     // IGP route B (2902::/48) -> nhop(2), nhop(3) with igpSidListB
     const std::vector<folly::IPAddressV6> igpSidListB{
@@ -222,7 +222,7 @@ class AgentSrv6EncapTest : public AgentHwTest {
         folly::IPAddressV6("2902::"),
         48,
         ClientID::OPENR,
-        RouteNextHopEntry(igpNhopsB, AdminDistance::MAX_ADMIN_DISTANCE));
+        RouteNextHopEntry(igpNhopsB, AdminDistance::OPENR));
 
     // SRv6 route -> 2901::1 (kSid0), 2902::1 (kSid1)
     RouteNextHopSet srv6Nhops{
@@ -232,8 +232,8 @@ class AgentSrv6EncapTest : public AgentHwTest {
         RouterID(0),
         routePrefix,
         kEncapRoutePrefixLen,
-        ClientID::BGPD,
-        RouteNextHopEntry(srv6Nhops, AdminDistance::EBGP));
+        ClientID::TE_AGENT,
+        RouteNextHopEntry(srv6Nhops, AdminDistance::TE_AGENT));
     routeUpdater.program();
   }
 
@@ -267,8 +267,8 @@ class AgentSrv6EncapTest : public AgentHwTest {
         RouterID(0),
         prefix.first,
         prefix.second,
-        ClientID::BGPD,
-        RouteNextHopEntry(nhops, AdminDistance::EBGP, counter));
+        ClientID::TE_AGENT,
+        RouteNextHopEntry(nhops, AdminDistance::TE_AGENT, counter));
     routeUpdater.program();
   }
 
@@ -607,10 +607,10 @@ TYPED_TEST(AgentSrv6EncapTest, multipleSidListsSameNextHop) {
           RouterID(0),
           this->kEncapRoutePrefix,
           this->kEncapRoutePrefixLen,
-          ClientID::BGPD,
+          ClientID::TE_AGENT,
           RouteNextHopEntry(
               nhopsA,
-              AdminDistance::EBGP,
+              AdminDistance::TE_AGENT,
               std::optional<RouteCounterID>("kSid0")));
 
       RouteNextHopSet nhopsB;
@@ -629,10 +629,10 @@ TYPED_TEST(AgentSrv6EncapTest, multipleSidListsSameNextHop) {
           RouterID(0),
           folly::IPAddressV6("2800:3::"),
           this->kEncapRoutePrefixLen,
-          ClientID::BGPD,
+          ClientID::TE_AGENT,
           RouteNextHopEntry(
               nhopsB,
-              AdminDistance::EBGP,
+              AdminDistance::TE_AGENT,
               std::optional<RouteCounterID>("kSid1")));
       routeUpdater.program();
     }
@@ -675,10 +675,10 @@ TYPED_TEST(AgentSrv6EncapTest, multipleSidListsSameNextHop) {
           RouterID(0),
           folly::IPAddressV6("2800:3::"),
           this->kEncapRoutePrefixLen,
-          ClientID::BGPD,
+          ClientID::TE_AGENT,
           RouteNextHopEntry(
               nhopsBNew,
-              AdminDistance::EBGP,
+              AdminDistance::TE_AGENT,
               std::optional<RouteCounterID>("kSid1")));
       routeUpdater.program();
     }
