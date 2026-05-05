@@ -3,6 +3,8 @@
 #include "fboss/agent/AgentFeatures.h"
 #include "fboss/agent/VoqConstants.h"
 
+DEFINE_bool(enable_lacp, false, "Run LACP in agent");
+
 DEFINE_bool(janga_test, false, "Enable Janga test fixture platform mapping");
 
 DEFINE_bool(test_fixture, false, "Enable test fixture platform mapping");
