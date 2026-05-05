@@ -27,6 +27,13 @@ class AgentFabricSwitchFabricLinkMonitoringTest : public AgentHwTest {
 
  private:
   void setCmdLineFlagOverrides() const override;
+
+  // initialConfig helpers
+  void addDsfNodes(
+      cfg::SwitchConfig& config,
+      const std::map<int64_t, cfg::SwitchInfo>& switchIdToSwitchInfo,
+      const AgentEnsemble& ensemble) const;
+  void configureExpectedNeighborReachability(cfg::SwitchConfig& config) const;
 };
 
 } // namespace facebook::fboss
