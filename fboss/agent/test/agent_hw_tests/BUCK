@@ -196,6 +196,7 @@ cpp_library(
         "AgentJumboFramesTests.cpp",
         "AgentL3ForwardingTests.cpp",
         "AgentL4PortBlackholingTests.cpp",
+        "AgentLinkLocalForwardingTests.cpp",
         "AgentLoadBalancerTests.cpp",
         "AgentLoopBackTests.cpp",
         "AgentMPLSTests.cpp",
