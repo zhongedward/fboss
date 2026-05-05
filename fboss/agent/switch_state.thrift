@@ -178,6 +178,12 @@ struct PortFields {
   65: optional bool clmEnable;
   // Link Training (IEEE 802.3 Cl.72/93/162) enable configuration for this port
   66: optional bool linkTraining;
+  // Hold timer (ms) the SDK applies before reporting a link-down event.
+  // Unset = leave SDK default untouched.
+  67: optional i32 portDownHoldoffTimeMs;
+  // Hold timer (ms) the SDK applies before reporting a link-up event.
+  // Unset = leave SDK default untouched.
+  68: optional i32 portUpHoldoffTimeMs;
 }
 
 typedef ctrl.SystemPortThrift SystemPortFields
