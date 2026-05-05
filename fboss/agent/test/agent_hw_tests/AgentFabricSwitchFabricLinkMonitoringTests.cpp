@@ -47,6 +47,111 @@ constexpr int64_t kRdswSwitchIdStart =
 constexpr int64_t kSdswSwitchIdStart =
     kRdswSwitchIdStart + kNumRdswSwitches * kNumSwitchIdsPerFdsw;
 
+constexpr auto kFabricLinkMonPuntPathCintStr = R"(
+cint_reset();
+int cint_instru_cell_profile_action_set(
+    int unit,
+    int flags,
+    uint32 cell_profile,
+    int forward,
+    int mirror,
+    int mirror_stat,
+    int global_capture,
+    int sop)
+{
+    int is_dnxf;
+    uint32 action_profile_map = 0;
+
+    BCM_IF_ERROR_RETURN_MSG(bcm_device_member_get(unit, 0, bcmDeviceMemberDNXF, &is_dnxf), " bcm_device_member_get Failed");
+    if (!is_dnxf)
+    {
+        printf("Function is only for FE devices. Unit %d provided. Is DNXF %d.\n", unit,is_dnxf);
+        return BCM_E_FAIL;
+    }
+
+    if (forward)
+    {
+        printf("Configure cell profile %d to FORWARD CELLs\n", cell_profile);
+        BCM_FABRIC_CELL_PROFILE_MAP_ACTION_FORWARDING_SET(action_profile_map);
+    }
+
+    if (mirror)
+    {
+        printf("Configure cell profile %d to MIRROR CELLs\n", cell_profile);
+        BCM_FABRIC_CELL_PROFILE_MAP_ACTION_MIRROR_SET(action_profile_map);
+    }
+
+    if (mirror_stat)
+    {
+        printf("Configure cell profile %d to MIRROR CELLs and take STATISTICS\n", cell_profile);
+        BCM_FABRIC_CELL_PROFILE_MAP_ACTION_MIRROR_WITH_STATISTICS_SET(action_profile_map);
+    }
+
+    if (global_capture)
+    {
+        printf("Configure cell profile %d to trigger Global Capture\n", cell_profile);
+        BCM_FABRIC_CELL_PROFILE_MAP_ACTION_GLOBAL_CAPTURE_SET(action_profile_map);
+    }
+
+    if (sop)
+    {
+        printf("Configure cell profile %d to trigger configured actions only on start of packet cell\n", cell_profile);
+        BCM_FABRIC_CELL_PROFILE_MAP_ACTION_SOP_ONLY_SET(action_profile_map);
+    }
+
+    BCM_IF_ERROR_RETURN_MSG(bcm_fabric_profile_map_set(unit, flags, bcmFabricProfileMapCellProfileToActionProfile,
+          cell_profile, action_profile_map), " bcm_fabric_profile_map_set Failed");
+
+    return BCM_E_NONE;
+}
+
+int cint_cell_profile_forward_mirror_action_set(int unit, uint32 cell_profile)
+{
+    int forward = 1;
+    int mirror = 1;
+    int mirror_stat = 0;
+    int global_capture = 0;
+    int sop = 0;
+    int flags = 0;
+    BCM_IF_ERROR_RETURN_MSG(cint_instru_cell_profile_action_set(unit, flags, cell_profile,
+        forward, mirror, mirror_stat, global_capture, sop), "cint_cell_profile_forward_mirror_action_set failed");
+
+    return BCM_E_NONE;
+}
+
+int fe13_standalone_link_monitoring_packet_path_en(int unit)
+{
+    uint32 value;
+
+    value = 1;
+    BCM_IF_ERROR_RETURN_MSG(diag_reg_field_set(unit, "DCH_AUTO_DOC_NAME_0" , "SNAKE_NO_SORT", &value), " DCH_AUTO_DOC_NAME_0 Failed");
+
+    value = 0;
+    BCM_IF_ERROR_RETURN_MSG(diag_reg_field_set(unit, "DCH_AUTO_DOC_NAME_13" , "AUTO_DOC_NAME_14", &value), " DCH_AUTO_DOC_NAME_13 Failed");
+
+    value = 0;
+    BCM_IF_ERROR_RETURN_MSG(diag_reg_field_set(unit, "DCH_AUTO_DOC_NAME_36" , "FIELD_0_0", &value), " DCH_AUTO_DOC_NAME_36 Failed");
+
+    value = 0;
+    BCM_IF_ERROR_RETURN_MSG(diag_reg_field_set(unit, "DCH_DCH_ENABLERS_REGISTER_2_P" , "AUTO_DOC_NAME_10", &value), " DCH_DCH_ENABLERS_REGISTER_2_P Failed");
+
+    value = 0xFF;
+    BCM_IF_ERROR_RETURN_MSG(diag_reg_field_set(unit, "DCH_DCH_ENABLERS_REGISTER_3_P" , "AUTO_DOC_NAME_12", &value), " DCH_DCH_ENABLERS_REGISTER_3_P Failed");
+
+    value = 1;
+    BCM_IF_ERROR_RETURN_MSG(diag_reg_field_set(unit, "DTM_DTML_ENABLERS" , "AUTO_DOC_NAME_8", &value), " DTM_DTML_ENABLERS Failed");
+
+    value = 0xFF;
+    BCM_IF_ERROR_RETURN_MSG(diag_reg_field_set(unit, "DTM_DTM_LINK_ACTIVE_MASK_CFG" , "LINK_ACTIVE_MASK_EN_P_N", &value), " DTM_DTM_LINK_ACTIVE_MASK_CFG Failed");
+
+    printf("fe13_standalone_link_monitoring_packet_path_en: PASS\n\n");
+    return BCM_E_NONE;
+}
+
+fe13_standalone_link_monitoring_packet_path_en(0);
+cint_cell_profile_forward_mirror_action_set(0, 2);
+)";
+
 // Get the simplified device name
 std::string getRdswName(int rdswIndex) {
   return fmt::format("rdsw{:03d}", rdswIndex);
@@ -328,4 +433,21 @@ void AgentFabricSwitchFabricLinkMonitoringTest::overrideTestEnsembleInitInfo(
   initInfo.overrideDsfNodes = std::move(dsfNodes);
 }
 
+void AgentFabricSwitchFabricLinkMonitoringTest::runCmd(const std::string& cmd) {
+  for (auto fabricSwitchId : getSw()->getSwitchInfoTable().getSwitchIdsOfType(
+           cfg::SwitchType::FABRIC)) {
+    std::string out;
+    getAgentEnsemble()->runDiagCommand(cmd, out, fabricSwitchId);
+  }
+}
+
+void AgentFabricSwitchFabricLinkMonitoringTest::runCint(
+    const std::string& cintStr) {
+  folly::test::TemporaryFile file;
+  XLOG(INFO) << " Cint file " << file.path().c_str();
+  auto written = folly::writeFull(file.fd(), cintStr.c_str(), cintStr.size());
+  CHECK_EQ(written, cintStr.size()) << "Failed to write cint file";
+  auto cmd = fmt::format("cint {}\n", file.path().c_str());
+  runCmd(cmd);
+}
 } // namespace facebook::fboss

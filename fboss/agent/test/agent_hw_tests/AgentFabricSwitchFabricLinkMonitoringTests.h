@@ -30,6 +30,11 @@ class AgentFabricSwitchFabricLinkMonitoringTest : public AgentHwTest {
  private:
   void setCmdLineFlagOverrides() const override;
 
+ protected:
+  void runCmd(const std::string& cmd);
+  void runCint(const std::string& cintStr);
+
+ private:
   // initialConfig helpers
   void addFabricPorts(cfg::SwitchConfig& config, const AgentEnsemble& ensemble)
       const;
