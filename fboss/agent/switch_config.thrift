@@ -1353,6 +1353,22 @@ struct Port {
    * When not set, the agent uses ASIC-level default behavior (disabled).
    */
   39: optional bool linkTraining;
+
+  /*
+   * Hold timer (in milliseconds) before reporting a port
+   * link-down event. The port stays in its previous state until the new
+   * state has been stable for this duration, debouncing brief flaps.
+   * Unset = leave SDK default untouched.
+   */
+  40: optional i32 portDownHoldoffTimeMs;
+
+  /*
+   * Hold timer (in milliseconds) before reporting a port
+   * link-up event. The port stays in its previous state until the new
+   * state has been stable for this duration, debouncing brief flaps.
+   * Unset = leave SDK default untouched.
+   */
+  41: optional i32 portUpHoldoffTimeMs;
 }
 
 enum LacpPortRate {

@@ -15946,7 +15946,9 @@ std::pair<apache::thrift::ident::fecErrorDetectEnable, Child<bool, ::apache::thr
 std::pair<apache::thrift::ident::interPacketGapBits, Child<::std::int32_t, ::apache::thrift::type_class::integral, ::apache::thrift::type::i32_t>>,
 std::pair<apache::thrift::ident::amIdles, Child<bool, ::apache::thrift::type_class::integral, ::apache::thrift::type::bool_t>>,
 std::pair<apache::thrift::ident::clmEnable, Child<bool, ::apache::thrift::type_class::integral, ::apache::thrift::type::bool_t>>,
-std::pair<apache::thrift::ident::linkTraining, Child<bool, ::apache::thrift::type_class::integral, ::apache::thrift::type::bool_t>>>;
+std::pair<apache::thrift::ident::linkTraining, Child<bool, ::apache::thrift::type_class::integral, ::apache::thrift::type::bool_t>>,
+std::pair<apache::thrift::ident::portDownHoldoffTimeMs, Child<::std::int32_t, ::apache::thrift::type_class::integral, ::apache::thrift::type::i32_t>>,
+std::pair<apache::thrift::ident::portUpHoldoffTimeMs, Child<::std::int32_t, ::apache::thrift::type_class::integral, ::apache::thrift::type::i32_t>>>;
 
   template <typename Name>
   using TypeFor = typename Children::template type_of<Name>;
@@ -15989,6 +15991,8 @@ std::pair<apache::thrift::ident::linkTraining, Child<bool, ::apache::thrift::typ
     STRUCT_CHILD_GETTERS(amIdles, 37);
     STRUCT_CHILD_GETTERS(clmEnable, 38);
     STRUCT_CHILD_GETTERS(linkTraining, 39);
+    STRUCT_CHILD_GETTERS(portDownHoldoffTimeMs, 40);
+    STRUCT_CHILD_GETTERS(portUpHoldoffTimeMs, 41);
 
   template <apache::thrift::FieldId __id>
   auto operator()(const std::integral_constant<apache::thrift::FieldId, __id>&) {
@@ -16029,6 +16033,8 @@ std::pair<apache::thrift::ident::linkTraining, Child<bool, ::apache::thrift::typ
     else if constexpr (__id == apache::thrift::FieldId{37}) { return amIdles(); }
     else if constexpr (__id == apache::thrift::FieldId{38}) { return clmEnable(); }
     else if constexpr (__id == apache::thrift::FieldId{39}) { return linkTraining(); }
+    else if constexpr (__id == apache::thrift::FieldId{40}) { return portDownHoldoffTimeMs(); }
+    else if constexpr (__id == apache::thrift::FieldId{41}) { return portUpHoldoffTimeMs(); }
   }
 };
 
