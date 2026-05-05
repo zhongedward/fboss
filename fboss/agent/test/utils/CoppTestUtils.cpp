@@ -696,11 +696,14 @@ void addMidPriAclForLldp(
     cfg::ToCpuAction toCpuAction,
     int midPriQueueId,
     std::vector<std::pair<cfg::AclEntry, cfg::MatchAction>>& acls,
-    bool isSai) {
+    bool isSai,
+    const folly::MacAddress& dstMac = LldpManager::LLDP_DEST_MAC,
+    const std::string& aclName = "cpuPolicing-mid-lldp-acl") {
   cfg::AclEntry acl;
   acl.etherType() = cfg::EtherType::LLDP;
-  acl.dstMac() = LldpManager::LLDP_DEST_MAC.toString();
-  acl.name() = folly::to<std::string>("cpuPolicing-mid-lldp-acl");
+  acl.dstMac() = dstMac.toString();
+  acl.actionType() = cfg::AclActionType::PERMIT;
+  acl.name() = aclName;
   auto action =
       createQueueMatchAction(hwAsic, midPriQueueId, isSai, toCpuAction);
   acls.emplace_back(acl, action);
@@ -977,6 +980,14 @@ defaultIngressCpuAclsForSai(
           getCoppMidPriQueueId({hwAsic}),
           acls,
           true);
+      addMidPriAclForLldp(
+          hwAsic,
+          cfg::ToCpuAction::TRAP,
+          getCoppMidPriQueueId({hwAsic}),
+          acls,
+          true,
+          LldpManager::LLDP_CUSTOMER_BRIDGE_MAC,
+          "cpuPolicing-mid-lldp-dstMac00");
     }
   }
 
@@ -1281,12 +1292,14 @@ std::vector<cfg::PacketRxReasonToQueue> getCoppRxReasonToQueuesForSai(
           ControlPlane::makeRxReasonToQueueEntry(
               cfg::PacketRxReason::DHCPV6, coppMidPriQueueId));
     }
+  }
 
-    if (hwAsic->getAsicVendor() == HwAsic::AsicVendor::ASIC_VENDOR_CHENAB) {
-      rxReasonToQueues.push_back(
-          ControlPlane::makeRxReasonToQueueEntry(
-              cfg::PacketRxReason::BPDU, kCoppLowPriQueueId));
-    }
+  // BPDU trap needed for CHENAB only because BPDU MAC in LLDP frame not trapped
+  // by existing LLDP trap
+  if (hwAsic->getAsicVendor() == HwAsic::AsicVendor::ASIC_VENDOR_CHENAB) {
+    rxReasonToQueues.push_back(
+        ControlPlane::makeRxReasonToQueueEntry(
+            cfg::PacketRxReason::BPDU, coppMidPriQueueId));
   }
 
   if (hwAsic->isSupported(HwAsic::Feature::SAI_EAPOL_TRAP)) {
