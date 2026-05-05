@@ -156,7 +156,8 @@ class AgentSrv6MidpointTest : public AgentHwTest {
     auto portDesc = mySidPortDesc();
     this->applyNewState(
         [&ecmpHelper, portDesc](std::shared_ptr<SwitchState> in) {
-          return ecmpHelper.resolveNextHops(in, {portDesc});
+          return ecmpHelper.resolveNextHops(
+              in, {portDesc}, /*useLinkLocal=*/true);
         },
         "resolve mysid neighbor");
     waitForMySidResolveOrUnresolve(/*resolved=*/true);
@@ -415,12 +416,13 @@ TYPED_TEST(AgentSrv6MidpointTest, sendPacketForUASidUnresolvedDropped) {
   auto setup = [this]() {
     this->setupHelper();
     // Unresolve the same mysid neighbor so the mySid entry becomes
-    // unresolved.
+    // unresolved (target the exact PortDescriptor, not "first N").
     auto ecmpHelper = this->makeEcmpHelper();
     auto portDesc = this->mySidPortDesc();
     this->applyNewState(
         [&ecmpHelper, portDesc](std::shared_ptr<SwitchState> in) {
-          return ecmpHelper.unresolveNextHops(in, {portDesc});
+          return ecmpHelper.unresolveNextHops(
+              in, {portDesc}, /*useLinkLocal=*/true);
         },
         "unresolve mysid neighbor");
     // Wait for MySidNeighborObserver to drop the resolved next hop before
