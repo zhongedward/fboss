@@ -7993,7 +7993,8 @@ class ChildThriftPath<::facebook::fboss::cfg::OpticalChannelConfig, ::facebook::
   >;
   using Children = thriftpath::TypeMap<std::pair<apache::thrift::ident::frequencyConfig, ChildThriftPath<::facebook::fboss::cfg::FrequencyConfig, ::facebook::fboss::fsdb::FsdbOperStateRoot, Self>>,
 std::pair<apache::thrift::ident::txPower0P01Dbm, Child<::std::int32_t, ::apache::thrift::type_class::integral, ::apache::thrift::type::i32_t>>,
-std::pair<apache::thrift::ident::appSelCode, Child<::std::int32_t, ::apache::thrift::type_class::integral, ::apache::thrift::type::i32_t>>>;
+std::pair<apache::thrift::ident::appSelCode, Child<::std::int32_t, ::apache::thrift::type_class::integral, ::apache::thrift::type::i32_t>>,
+std::pair<apache::thrift::ident::rxConsActHoldOffTimerMs, Child<::std::int32_t, ::apache::thrift::type_class::integral, ::apache::thrift::type::i32_t>>>;
 
   template <typename Name>
   using TypeFor = typename Children::template type_of<Name>;
@@ -8002,12 +8003,14 @@ std::pair<apache::thrift::ident::appSelCode, Child<::std::int32_t, ::apache::thr
     STRUCT_CHILD_GETTERS(frequencyConfig, 1);
     STRUCT_CHILD_GETTERS(txPower0P01Dbm, 2);
     STRUCT_CHILD_GETTERS(appSelCode, 3);
+    STRUCT_CHILD_GETTERS(rxConsActHoldOffTimerMs, 4);
 
   template <apache::thrift::FieldId __id>
   auto operator()(const std::integral_constant<apache::thrift::FieldId, __id>&) {
     if constexpr (__id == apache::thrift::FieldId{1}) { return frequencyConfig(); }
     else if constexpr (__id == apache::thrift::FieldId{2}) { return txPower0P01Dbm(); }
     else if constexpr (__id == apache::thrift::FieldId{3}) { return appSelCode(); }
+    else if constexpr (__id == apache::thrift::FieldId{4}) { return rxConsActHoldOffTimerMs(); }
   }
 };
 
