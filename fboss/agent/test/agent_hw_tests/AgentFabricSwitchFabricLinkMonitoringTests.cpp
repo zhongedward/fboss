@@ -450,4 +450,43 @@ void AgentFabricSwitchFabricLinkMonitoringTest::runCint(
   auto cmd = fmt::format("cint {}\n", file.path().c_str());
   runCmd(cmd);
 }
+
+TEST_F(
+    AgentFabricSwitchFabricLinkMonitoringTest,
+    validateFabricLinkMonitoring) {
+  auto setup = [this]() { runCint(kFabricLinkMonPuntPathCintStr); };
+  auto verify = [this]() {
+    auto allFabricPorts = masterLogicalFabricPortIds();
+    ASSERT_FALSE(allFabricPorts.empty()) << "No fabric ports found";
+
+    // Get only the L2-connected ports for monitoring verification
+    // FabricLinkMonitoringManager only monitors ports connected to L2 switches
+    auto l2ConnectedPorts = getL2ConnectedL1FabricPorts(getSw()->getState());
+    ASSERT_FALSE(l2ConnectedPorts.empty())
+        << "No L2-connected fabric ports found";
+
+    // Convert set to vector for the utility functions
+    std::vector<PortID> l2Ports(
+        l2ConnectedPorts.begin(), l2ConnectedPorts.end());
+
+    XLOG(DBG2) << "Verifying fabric link monitoring on " << l2Ports.size()
+               << " L2-connected ports out of " << allFabricPorts.size()
+               << " total fabric ports";
+
+    auto* fabricLinkMonMgr = getSw()->getFabricLinkMonitoringManager();
+    auto initialStats = utility::collectFabricLinkMonitoringStats(
+        fabricLinkMonMgr, l2Ports, l2Ports.size());
+
+    WITH_RETRIES({
+      EXPECT_EVENTUALLY_TRUE(
+          utility::allPortsHaveFabricLinkMonitoringCounterIncrements(
+              fabricLinkMonMgr, l2Ports, initialStats, l2Ports.size()))
+          << "Waiting for fabric_link_monitoring_tx_packets/rx_packets "
+          << "counters to increment by at least "
+          << utility::kFabricLinkMonitoringMinCounterIncrement << " on all "
+          << l2Ports.size() << " L2-connected fabric ports";
+    });
+  };
+  verifyAcrossWarmBoots(setup, verify);
+}
 } // namespace facebook::fboss
