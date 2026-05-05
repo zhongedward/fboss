@@ -125,6 +125,8 @@ enum ProductionFeature {
   MPLS_MIDPOINT = 107,
   MPLS_TAILEND = 108,
   PORT_DEBOUNCE = 109,
+  IP_IN_IP_ENCAP = 110,
+  MIRROR_ON_DROP_STATELESS = 111,
   # production feature which is present on all platforms, keep it at the end
   HW_SWITCH = 65536,
 }
