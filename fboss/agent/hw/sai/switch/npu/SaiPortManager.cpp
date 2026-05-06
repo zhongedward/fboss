@@ -1188,14 +1188,16 @@ void SaiPortManager::programSerdes(
   if (platform_->getAsic()->getAsicType() ==
           cfg::AsicType::ASIC_TYPE_TOMAHAWK5 ||
       platform_->getAsic()->getAsicType() ==
-          cfg::AsicType::ASIC_TYPE_TOMAHAWK6) {
+          cfg::AsicType::ASIC_TYPE_TOMAHAWK6 ||
+      platform_->getAsic()->getAsicType() ==
+          cfg::AsicType::ASIC_TYPE_TOMAHAWKULTRA1) {
     // TODO(daiweix): enable SAI_PORT_SERDES_FIELDS_RESET feature for TH4, TH5
     // and TH6, so as to set sixtap attributes all at once. Also need to verify
     // no tests broken because of it.
     auto platformPort = platform_->getPort(swPort->getID());
     if (platformPort->getPortType() == cfg::PortType::MANAGEMENT_PORT) {
       XLOG(DBG2)
-          << "Tomahawk5-6 management port only support 3 tap serdes setting";
+          << "Tomahawk5/6/Ultra1 management port only support 3 tap serdes setting";
       std::get<std::optional<SaiPortSerdesTraits::Attributes::TxFirPre2>>(
           serdesAttributes) = std::nullopt;
       std::get<std::optional<SaiPortSerdesTraits::Attributes::TxFirPre3>>(
