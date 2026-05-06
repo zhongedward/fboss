@@ -64,12 +64,14 @@ class AgentSrv6EncapTest : public AgentHwTest {
           ProductionFeature::SRV6_ENCAP,
           ProductionFeature::L3_QOS,
           ProductionFeature::ECN,
-          ProductionFeature::LAG};
+          ProductionFeature::LAG,
+          ProductionFeature::ROUTE_COUNTERS};
     }
     return {
         ProductionFeature::SRV6_ENCAP,
         ProductionFeature::L3_QOS,
-        ProductionFeature::ECN};
+        ProductionFeature::ECN,
+        ProductionFeature::ROUTE_COUNTERS};
   }
 
   void setCmdLineFlagOverrides() const override {
@@ -235,8 +237,7 @@ class AgentSrv6EncapTest : public AgentHwTest {
   template <typename CIDRNetworkT>
   void addEncapRoute(
       const CIDRNetworkT& prefix,
-      const std::vector<std::vector<folly::IPAddressV6>>& sidLists,
-      const std::string& counterID = "") {
+      const std::vector<std::vector<folly::IPAddressV6>>& sidLists) {
     using IPAddrT = decltype(prefix.first);
     auto ecmpHelper = makeEcmpHelper<std::remove_const_t<IPAddrT>>();
     RouteNextHopSet nhops;
@@ -273,9 +274,7 @@ class AgentSrv6EncapTest : public AgentHwTest {
     NamedRouteDestination namedDest;
     namedDest.nextHopGroup_ref() = nhgName;
     route.namedRouteDestination() = namedDest;
-    if (!counterID.empty()) {
-      route.counterID() = counterID;
-    }
+    route.counterID() = nhgName;
 
     auto routeUpdater = this->getSw()->getRouteUpdater();
     routeUpdater.addRoute(RouterID(0), ClientID::TE_AGENT, route);
@@ -635,7 +634,7 @@ TYPED_TEST(AgentSrv6EncapTest, multipleSidListsSameNextHop) {
       NamedRouteDestination namedDestA;
       namedDestA.nextHopGroup_ref() = "nhg-sid0";
       routeA.namedRouteDestination() = namedDestA;
-      routeA.counterID() = "kSid0";
+      routeA.counterID() = "nhg-sid0";
       routeUpdater.addRoute(RouterID(0), ClientID::TE_AGENT, routeA);
 
       UnicastRoute routeB;
@@ -645,7 +644,7 @@ TYPED_TEST(AgentSrv6EncapTest, multipleSidListsSameNextHop) {
       NamedRouteDestination namedDestB;
       namedDestB.nextHopGroup_ref() = "nhg-sid1";
       routeB.namedRouteDestination() = namedDestB;
-      routeB.counterID() = "kSid1";
+      routeB.counterID() = "nhg-sid1";
       routeUpdater.addRoute(RouterID(0), ClientID::TE_AGENT, routeB);
 
       routeUpdater.program();
@@ -660,7 +659,7 @@ TYPED_TEST(AgentSrv6EncapTest, multipleSidListsSameNextHop) {
         {this->kSid0},
         std::nullopt,
         std::nullopt,
-        "kSid0");
+        "nhg-sid0");
     this->verifyEncapPacket(
         {egressPort},
         false /*ecnMarked*/,
@@ -668,7 +667,7 @@ TYPED_TEST(AgentSrv6EncapTest, multipleSidListsSameNextHop) {
         {this->kSid1},
         std::nullopt /*injectPort*/,
         folly::IPAddress("2800:3::1"),
-        "kSid1");
+        "nhg-sid1");
 
     // Phase 2: Update NHG B to use nhop(1) instead of nhop(0)
     {
@@ -698,7 +697,7 @@ TYPED_TEST(AgentSrv6EncapTest, multipleSidListsSameNextHop) {
         {this->kSid0},
         std::nullopt,
         std::nullopt,
-        "kSid0");
+        "nhg-sid0");
 
     // Route B encaps with kSid1 via nhop(1)
     this->verifyEncapPacket(
@@ -708,7 +707,7 @@ TYPED_TEST(AgentSrv6EncapTest, multipleSidListsSameNextHop) {
         {this->kSid1},
         std::nullopt /*injectPort*/,
         folly::IPAddress("2800:3::1"),
-        "kSid1");
+        "nhg-sid1");
   };
   this->verifyAcrossWarmBoots(setup, verify);
 }
