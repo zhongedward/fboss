@@ -153,6 +153,23 @@ class AgentMirrorOnDropStatelessTest : public AgentMirrorOnDropTestBase {
       const folly::IPAddressV6& tunnelSrcIp,
       const PortID& srcPortId);
 
+  // ===== TEMPLATE TEST METHODS =====
+
+  // Send a packet with no matching route and verify MirrorOnDrop captures it.
+  void testDefaultRouteDrop();
+
+  // Add a deny ACL, send a matching packet, and verify capture.
+  void testAclDrop();
+
+  // Exhaust MMU buffers by disabling TX, and verify capture.
+  void testMmuDrop();
+
+  // Coldboot without MoD; add MoD with sampling post-warmboot and verify.
+  void testWarmbootEnableSampling(int samplingRate = 90000);
+
+  // Coldboot with MoD sampling; remove post-warmboot and verify absence.
+  void testWarmbootDisableSampling(int samplingRate = 90000);
+
   // ===== COMMON UTILITIES =====
 
   void validateMirrorOnDropPacket(
@@ -165,6 +182,11 @@ class AgentMirrorOnDropStatelessTest : public AgentMirrorOnDropTestBase {
   void waitForStatsToStabilize(const std::vector<PortID>& ports);
 
  private:
+  // Shared body of the two warmboot toggle tests above. enablePostWarmboot
+  // selects the direction: true = coldboot empty → warmboot adds the report;
+  // false = coldboot has the report → warmboot removes it.
+  void testWarmbootToggleSampling(bool enablePostWarmboot, int samplingRate);
+
   std::unique_ptr<MirrorOnDropImpl> impl_;
 };
 

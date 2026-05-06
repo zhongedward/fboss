@@ -4,10 +4,18 @@
 
 #include <gtest/gtest.h>
 
+#include <folly/ScopeGuard.h>
+
 #include "fboss/agent/AsicUtils.h"
 #include "fboss/agent/FbossError.h"
+#include "fboss/agent/TxPacket.h"
+#include "fboss/agent/packet/PktUtil.h"
 #include "fboss/agent/test/TestUtils.h"
+#include "fboss/agent/test/utils/AclTestUtils.h"
+#include "fboss/agent/test/utils/PacketSnooper.h"
 #include "fboss/agent/test/utils/PfcTestUtils.h"
+#include "fboss/agent/test/utils/PortTestUtils.h"
+#include "fboss/agent/test/utils/TrapPacketUtils.h"
 #include "fboss/lib/CommonUtils.h"
 
 namespace facebook::fboss {
@@ -172,6 +180,204 @@ void AgentMirrorOnDropStatelessTest::waitForStatsToStabilize(
     prevStats = std::move(curStats);
     EXPECT_EVENTUALLY_GE(stableCount, kStableIterations);
   });
+}
+
+void AgentMirrorOnDropStatelessTest::testDefaultRouteDrop() {
+  PortID injectionPortId = masterLogicalInterfacePortIds()[0];
+  PortID collectorPortId = masterLogicalInterfacePortIds()[1];
+
+  auto setup = [&]() {
+    auto config = getAgentEnsemble()->getCurrentConfig();
+    config.mirrorOnDropReports()->push_back(
+        makeMirrorOnDropReport("mod-default-route-drop"));
+    utility::addTrapPacketAcl(&config, kCollectorNextHopMac_);
+    applyNewConfig(config);
+    setupEcmpTraffic(collectorPortId, kCollectorIp_, kCollectorNextHopMac_);
+    waitForStateUpdates(getSw());
+  };
+
+  auto verify = [&]() {
+    utility::SwSwitchPacketSnooper snooper(getSw(), "mod-snooper");
+    snooper.ignoreUnclaimedRxPkts();
+    sendPackets(1, injectionPortId, kDropDestIp);
+
+    WITH_RETRIES_N(5, {
+      auto frameRx = snooper.waitForPacket(1);
+      EXPECT_EVENTUALLY_TRUE(frameRx.has_value());
+      if (frameRx.has_value()) {
+        XLOG(INFO) << "Captured MirrorOnDrop packet:\n"
+                   << PktUtil::hexDump(frameRx->get());
+        validateMirrorOnDropPacket(
+            frameRx->get(),
+            injectionPortId,
+            getDefaultRouteDropReasons(),
+            kDropDestIp);
+      }
+    });
+  };
+
+  verifyAcrossWarmBoots(setup, verify);
+}
+
+void AgentMirrorOnDropStatelessTest::testAclDrop() {
+  PortID injectionPortId = masterLogicalInterfacePortIds()[0];
+  PortID collectorPortId = masterLogicalInterfacePortIds()[1];
+  const folly::IPAddressV6 kAclDropDestIp{"2401:db00:e112:9100:1006::1"};
+
+  auto setup = [&]() {
+    auto config = getAgentEnsemble()->getCurrentConfig();
+    config.mirrorOnDropReports()->push_back(
+        makeMirrorOnDropReport("mod-acl-drop"));
+
+    cfg::AclEntry aclEntry;
+    aclEntry.name() = "acl-drop-by-dstip";
+    aclEntry.dstIp() = fmt::format("{}/128", kAclDropDestIp.str());
+    aclEntry.actionType() = cfg::AclActionType::DENY;
+    utility::addAclEntry(&config, aclEntry, utility::kDefaultAclTable());
+
+    utility::addTrapPacketAcl(&config, kCollectorNextHopMac_);
+    applyNewConfig(config);
+    setupEcmpTraffic(collectorPortId, kCollectorIp_, kCollectorNextHopMac_);
+    waitForStateUpdates(getSw());
+  };
+
+  auto verify = [&]() {
+    utility::SwSwitchPacketSnooper snooper(getSw(), "mod-acl-snooper");
+    snooper.ignoreUnclaimedRxPkts();
+    auto pkt = sendPackets(1, injectionPortId, kAclDropDestIp);
+    XLOG(INFO) << "Sent packet to trigger ACL drop:\n"
+               << PktUtil::hexDump(pkt->buf());
+
+    WITH_RETRIES_N(5, {
+      auto frameRx = snooper.waitForPacket(1);
+      EXPECT_EVENTUALLY_TRUE(frameRx.has_value());
+      if (frameRx.has_value()) {
+        XLOG(INFO) << "Captured MirrorOnDrop packet for ACL drop:\n"
+                   << PktUtil::hexDump(frameRx->get());
+        validateMirrorOnDropPacket(
+            frameRx->get(),
+            injectionPortId,
+            getAclDropReasons(),
+            kAclDropDestIp);
+      }
+    });
+  };
+
+  verifyAcrossWarmBoots(setup, verify);
+}
+
+void AgentMirrorOnDropStatelessTest::testMmuDrop() {
+  PortID injectionPortId = masterLogicalInterfacePortIds()[0];
+  PortID collectorPortId = masterLogicalInterfacePortIds()[1];
+  PortID txOffPortId = masterLogicalInterfacePortIds()[2];
+  // constexpr (not just const) so Infer doesn't flag the lambda capture as a
+  // dead store: the value is purely compile-time and needs no storage.
+  constexpr int kPriority = 2;
+
+  auto setup = [&]() {
+    auto config = getAgentEnsemble()->getCurrentConfig();
+    config.mirrorOnDropReports()->push_back(
+        makeMirrorOnDropReport("mod-mmu-drop"));
+    configureMmuDropBuffers(config, injectionPortId, kPriority);
+    utility::addTrapPacketAcl(&config, kCollectorNextHopMac_);
+    applyNewConfig(config);
+    setupEcmpTraffic(collectorPortId, kCollectorIp_, kCollectorNextHopMac_);
+    setupEcmpTraffic(
+        txOffPortId,
+        kDropDestIp,
+        getMacForFirstInterfaceWithPortsForTesting(getProgrammedState()));
+    waitForStateUpdates(getSw());
+  };
+
+  auto verify = [&]() {
+    utility::setCreditWatchdogAndPortTx(getAgentEnsemble(), txOffPortId, false);
+    // Ensure TX is restored even if an assertion fails or an exception is
+    // thrown below. Otherwise the port stays in TX-off across the warmboot
+    // verify iteration and across subsequent tests.
+    SCOPE_EXIT {
+      utility::setCreditWatchdogAndPortTx(
+          getAgentEnsemble(), txOffPortId, true);
+    };
+
+    utility::SwSwitchPacketSnooper snooper(getSw(), "mod-mmu-snooper");
+    snooper.ignoreUnclaimedRxPkts();
+
+    // Snapshot inCongestionDiscards before sending. The counter is monotonic
+    // across the warmboot iteration, so checking > 0 alone would pass on the
+    // post-warmboot pass even if no new drops occurred.
+    const int64_t discardsBefore =
+        *getLatestPortStats(injectionPortId).inCongestionDiscards_();
+
+    sendPackets(10000, injectionPortId, kDropDestIp, kPriority);
+
+    WITH_RETRIES({
+      auto portStats = getLatestPortStats(injectionPortId);
+      EXPECT_EVENTUALLY_GT(*portStats.inCongestionDiscards_(), discardsBefore);
+    });
+
+    WITH_RETRIES_N(5, {
+      auto frameRx = snooper.waitForPacket(1);
+      EXPECT_EVENTUALLY_TRUE(frameRx.has_value());
+      if (frameRx.has_value()) {
+        validateMirrorOnDropPacket(
+            frameRx->get(), injectionPortId, getMmuDropReasons());
+      }
+    });
+  };
+
+  verifyAcrossWarmBoots(setup, verify);
+}
+
+void AgentMirrorOnDropStatelessTest::testWarmbootToggleSampling(
+    bool enablePostWarmboot,
+    int samplingRate) {
+  const std::string kReportName = "mod-wb-toggle-sampling";
+
+  auto addMod = [&]() {
+    auto config = getAgentEnsemble()->getCurrentConfig();
+    config.mirrorOnDropReports()->push_back(
+        makeMirrorOnDropReport(kReportName, samplingRate));
+    applyNewConfig(config);
+    waitForStateUpdates(getSw());
+  };
+
+  auto removeMod = [&]() {
+    auto config = getAgentEnsemble()->getCurrentConfig();
+    config.mirrorOnDropReports()->clear();
+    applyNewConfig(config);
+    waitForStateUpdates(getSw());
+  };
+
+  auto verifyPresent = [&]() {
+    auto state = getProgrammedState();
+    auto reports = state->getMirrorOnDropReports();
+    ASSERT_NE(reports, nullptr);
+    auto report = reports->getNodeIf(kReportName);
+    ASSERT_NE(report, nullptr);
+    EXPECT_EQ(report->getSamplingRate(), samplingRate);
+  };
+
+  auto verifyAbsent = [&]() {
+    auto state = getProgrammedState();
+    auto reports = state->getMirrorOnDropReports();
+    EXPECT_TRUE(reports == nullptr || reports->numNodes() == 0);
+  };
+
+  if (enablePostWarmboot) {
+    verifyAcrossWarmBoots([]() {}, verifyAbsent, addMod, verifyPresent);
+  } else {
+    verifyAcrossWarmBoots(addMod, verifyPresent, removeMod, verifyAbsent);
+  }
+}
+
+void AgentMirrorOnDropStatelessTest::testWarmbootEnableSampling(
+    int samplingRate) {
+  testWarmbootToggleSampling(/*enablePostWarmboot=*/true, samplingRate);
+}
+
+void AgentMirrorOnDropStatelessTest::testWarmbootDisableSampling(
+    int samplingRate) {
+  testWarmbootToggleSampling(/*enablePostWarmboot=*/false, samplingRate);
 }
 
 } // namespace facebook::fboss
