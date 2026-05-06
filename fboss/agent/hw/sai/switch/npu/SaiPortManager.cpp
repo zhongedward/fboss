@@ -1074,11 +1074,7 @@ void SaiPortManager::programSerdes(
           HwAsic::Feature::SAI_PORT_SERDES_PROGRAMMING) ||
       swPort->getPortType() == cfg::PortType::RECYCLE_PORT ||
       swPort->getPortType() == cfg::PortType::EVENTOR_PORT ||
-      swPort->getPortType() == cfg::PortType::HYPER_PORT
-#if defined(CHENAB_SAI_SDK)
-      || swPort->getPortType() == cfg::PortType::MANAGEMENT_PORT
-#endif
-  ) {
+      swPort->getPortType() == cfg::PortType::HYPER_PORT) {
     return;
   }
 
