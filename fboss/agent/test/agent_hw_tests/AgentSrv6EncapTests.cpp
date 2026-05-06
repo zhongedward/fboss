@@ -1,12 +1,17 @@
 // (c) Meta Platforms, Inc. and affiliates. Confidential and proprietary.
 
+#include "fboss/agent/AddressUtil.h"
 #include "fboss/agent/AgentFeatures.h"
 #include "fboss/agent/AsicUtils.h"
 #include "fboss/agent/SwSwitchRouteUpdateWrapper.h"
 #include "fboss/agent/gen-cpp2/switch_config_types.h"
 #include "fboss/agent/hw/test/ConfigFactory.h"
+#include "fboss/agent/if/gen-cpp2/common_types.h"
+#include "fboss/agent/if/gen-cpp2/ctrl_types.h"
 #include "fboss/agent/packet/Ethertype.h"
 #include "fboss/agent/packet/PktFactory.h"
+#include "fboss/agent/rib/NextHopIDManager.h"
+#include "fboss/agent/rib/RoutingInformationBase.h"
 #include "fboss/agent/state/AggregatePort.h"
 #include "fboss/agent/state/RouteNextHop.h"
 #include "fboss/agent/state/Srv6Tunnel.h"
@@ -59,16 +64,12 @@ class AgentSrv6EncapTest : public AgentHwTest {
           ProductionFeature::SRV6_ENCAP,
           ProductionFeature::L3_QOS,
           ProductionFeature::ECN,
-          ProductionFeature::LAG,
-          ProductionFeature::ROUTE_COUNTERS,
-      };
+          ProductionFeature::LAG};
     }
     return {
         ProductionFeature::SRV6_ENCAP,
         ProductionFeature::L3_QOS,
-        ProductionFeature::ECN,
-        ProductionFeature::ROUTE_COUNTERS,
-    };
+        ProductionFeature::ECN};
   }
 
   void setCmdLineFlagOverrides() const override {
@@ -149,26 +150,20 @@ class AgentSrv6EncapTest : public AgentHwTest {
     if (programEncapRoutes) {
       // IPv6 encap routes (v6 next hops)
       addEncapRoute<folly::CIDRNetworkV6>(
-          {kEncapRoutePrefix, kEncapRoutePrefixLen}, {{kSid0}}, "kSid0");
+          {kEncapRoutePrefix, kEncapRoutePrefixLen}, {{kSid0}});
       addEncapRoute<folly::CIDRNetworkV6>(
           {folly::IPAddressV6("2800:3::"), kEncapRoutePrefixLen},
-          {{kSid1}, {kSid2}},
-          "kSid1_or_kSid2");
+          {{kSid1}, {kSid2}});
       addEncapRoute<folly::CIDRNetworkV6>(
           {folly::IPAddressV6("2800:4::"), kEncapRoutePrefixLen},
-          {{kSid1}, {kSid2}},
-          "kSid1_or_kSid2");
+          {{kSid1}, {kSid2}});
       // IPv4 encap routes (v4 next hops)
       addEncapRoute<folly::CIDRNetworkV4>(
-          {folly::IPAddressV4("100.0.0.0"), 24}, {{kSid0}}, "kSid0");
+          {folly::IPAddressV4("100.0.0.0"), 24}, {{kSid0}});
       addEncapRoute<folly::CIDRNetworkV4>(
-          {folly::IPAddressV4("200.0.0.0"), 24},
-          {{kSid1}, {kSid2}},
-          "kSid1_or_kSid2");
+          {folly::IPAddressV4("200.0.0.0"), 24}, {{kSid1}, {kSid2}});
       addEncapRoute<folly::CIDRNetworkV4>(
-          {folly::IPAddressV4("201.0.0.0"), 24},
-          {{kSid1}, {kSid2}},
-          "kSid1_or_kSid2");
+          {folly::IPAddressV4("201.0.0.0"), 24}, {{kSid1}, {kSid2}});
     }
   }
 
@@ -247,9 +242,8 @@ class AgentSrv6EncapTest : public AgentHwTest {
     RouteNextHopSet nhops;
     for (auto i = 0; i < sidLists.size(); ++i) {
       auto nhop = ecmpHelper.nhop(i);
-      nhops.insert(ResolvedNextHop(
+      nhops.insert(UnresolvedNextHop(
           nhop.ip,
-          nhop.intf,
           ECMP_WEIGHT,
           std::nullopt,
           std::nullopt,
@@ -259,16 +253,32 @@ class AgentSrv6EncapTest : public AgentHwTest {
           TunnelType::SRV6_ENCAP,
           std::string("srv6Tunnel0")));
     }
-    std::optional<RouteCounterID> counter = counterID.empty()
-        ? std::nullopt
-        : std::optional<RouteCounterID>(counterID);
+
+    auto nhgName =
+        fmt::format("srv6-nhg-{}-{}", prefix.first.str(), prefix.second);
+
+    auto rib = this->getSw()->getRib();
+    std::vector<std::pair<std::string, RouteNextHopSet>> groups;
+    groups.emplace_back(nhgName, nhops);
+    rib->addOrUpdateNamedNextHopGroups(
+        this->getSw()->getScopeResolver(),
+        groups,
+        createRibToSwitchStateFunction(),
+        this->getSw());
+
+    UnicastRoute route;
+    route.dest()->ip() =
+        facebook::network::toBinaryAddress(folly::IPAddress(prefix.first));
+    route.dest()->prefixLength() = prefix.second;
+    NamedRouteDestination namedDest;
+    namedDest.nextHopGroup_ref() = nhgName;
+    route.namedRouteDestination() = namedDest;
+    if (!counterID.empty()) {
+      route.counterID() = counterID;
+    }
+
     auto routeUpdater = this->getSw()->getRouteUpdater();
-    routeUpdater.addRoute(
-        RouterID(0),
-        prefix.first,
-        prefix.second,
-        ClientID::TE_AGENT,
-        RouteNextHopEntry(nhops, AdminDistance::TE_AGENT, counter));
+    routeUpdater.addRoute(RouterID(0), ClientID::TE_AGENT, route);
     routeUpdater.program();
   }
 
@@ -585,55 +595,59 @@ TYPED_TEST(AgentSrv6EncapTest, multipleSidListsSameNextHop) {
     auto ecmpHelper = this->makeEcmpHelper();
     auto nhop0 = ecmpHelper.nhop(0);
     auto nhop1 = ecmpHelper.nhop(1);
+    auto rib = this->getSw()->getRib();
 
-    // Phase 1: Two routes with different SID lists both via nhop(0)
-    // Route A: kEncapRoutePrefix/64 -> nhop(0) with kSid0
-    // Route B: 2800:3::/64 -> nhop(0) with kSid1
+    auto makeNhopSet = [](const auto& nhop,
+                          const std::vector<folly::IPAddressV6>& sidList) {
+      RouteNextHopSet nhops;
+      nhops.insert(UnresolvedNextHop(
+          nhop.ip,
+          ECMP_WEIGHT,
+          std::nullopt,
+          std::nullopt,
+          std::nullopt,
+          std::nullopt,
+          sidList,
+          TunnelType::SRV6_ENCAP,
+          std::string("srv6Tunnel0")));
+      return nhops;
+    };
+
+    // Phase 1: Two routes with different named NHGs both via nhop(0)
+    // NHG A: nhop(0) with kSid0
+    // NHG B: nhop(0) with kSid1
     {
-      auto routeUpdater = this->getSw()->getRouteUpdater();
-      RouteNextHopSet nhopsA;
-      nhopsA.insert(ResolvedNextHop(
-          nhop0.ip,
-          nhop0.intf,
-          ECMP_WEIGHT,
-          std::nullopt,
-          std::nullopt,
-          std::nullopt,
-          std::nullopt,
-          std::vector<folly::IPAddressV6>{this->kSid0},
-          TunnelType::SRV6_ENCAP,
-          std::string("srv6Tunnel0")));
-      routeUpdater.addRoute(
-          RouterID(0),
-          this->kEncapRoutePrefix,
-          this->kEncapRoutePrefixLen,
-          ClientID::TE_AGENT,
-          RouteNextHopEntry(
-              nhopsA,
-              AdminDistance::TE_AGENT,
-              std::optional<RouteCounterID>("kSid0")));
+      std::vector<std::pair<std::string, RouteNextHopSet>> groups;
+      groups.emplace_back("nhg-sid0", makeNhopSet(nhop0, {this->kSid0}));
+      groups.emplace_back("nhg-sid1", makeNhopSet(nhop0, {this->kSid1}));
+      rib->addOrUpdateNamedNextHopGroups(
+          this->getSw()->getScopeResolver(),
+          groups,
+          createRibToSwitchStateFunction(),
+          this->getSw());
 
-      RouteNextHopSet nhopsB;
-      nhopsB.insert(ResolvedNextHop(
-          nhop0.ip,
-          nhop0.intf,
-          ECMP_WEIGHT,
-          std::nullopt,
-          std::nullopt,
-          std::nullopt,
-          std::nullopt,
-          std::vector<folly::IPAddressV6>{this->kSid1},
-          TunnelType::SRV6_ENCAP,
-          std::string("srv6Tunnel0")));
-      routeUpdater.addRoute(
-          RouterID(0),
-          folly::IPAddressV6("2800:3::"),
-          this->kEncapRoutePrefixLen,
-          ClientID::TE_AGENT,
-          RouteNextHopEntry(
-              nhopsB,
-              AdminDistance::TE_AGENT,
-              std::optional<RouteCounterID>("kSid1")));
+      auto routeUpdater = this->getSw()->getRouteUpdater();
+
+      UnicastRoute routeA;
+      routeA.dest()->ip() = facebook::network::toBinaryAddress(
+          folly::IPAddress(this->kEncapRoutePrefix));
+      routeA.dest()->prefixLength() = this->kEncapRoutePrefixLen;
+      NamedRouteDestination namedDestA;
+      namedDestA.nextHopGroup_ref() = "nhg-sid0";
+      routeA.namedRouteDestination() = namedDestA;
+      routeA.counterID() = "kSid0";
+      routeUpdater.addRoute(RouterID(0), ClientID::TE_AGENT, routeA);
+
+      UnicastRoute routeB;
+      routeB.dest()->ip() = facebook::network::toBinaryAddress(
+          folly::IPAddress(folly::IPAddressV6("2800:3::")));
+      routeB.dest()->prefixLength() = this->kEncapRoutePrefixLen;
+      NamedRouteDestination namedDestB;
+      namedDestB.nextHopGroup_ref() = "nhg-sid1";
+      routeB.namedRouteDestination() = namedDestB;
+      routeB.counterID() = "kSid1";
+      routeUpdater.addRoute(RouterID(0), ClientID::TE_AGENT, routeB);
+
       routeUpdater.program();
     }
 
@@ -656,31 +670,15 @@ TYPED_TEST(AgentSrv6EncapTest, multipleSidListsSameNextHop) {
         folly::IPAddress("2800:3::1"),
         "kSid1");
 
-    // Phase 2: Change route B to use nhop(1) instead of nhop(0)
+    // Phase 2: Update NHG B to use nhop(1) instead of nhop(0)
     {
-      auto routeUpdater = this->getSw()->getRouteUpdater();
-      RouteNextHopSet nhopsBNew;
-      nhopsBNew.insert(ResolvedNextHop(
-          nhop1.ip,
-          nhop1.intf,
-          ECMP_WEIGHT,
-          std::nullopt,
-          std::nullopt,
-          std::nullopt,
-          std::nullopt,
-          std::vector<folly::IPAddressV6>{this->kSid1},
-          TunnelType::SRV6_ENCAP,
-          std::string("srv6Tunnel0")));
-      routeUpdater.addRoute(
-          RouterID(0),
-          folly::IPAddressV6("2800:3::"),
-          this->kEncapRoutePrefixLen,
-          ClientID::TE_AGENT,
-          RouteNextHopEntry(
-              nhopsBNew,
-              AdminDistance::TE_AGENT,
-              std::optional<RouteCounterID>("kSid1")));
-      routeUpdater.program();
+      std::vector<std::pair<std::string, RouteNextHopSet>> updatedGroups;
+      updatedGroups.emplace_back("nhg-sid1", makeNhopSet(nhop1, {this->kSid1}));
+      rib->addOrUpdateNamedNextHopGroups(
+          this->getSw()->getScopeResolver(),
+          updatedGroups,
+          createRibToSwitchStateFunction(),
+          this->getSw());
     }
   };
 
