@@ -11,6 +11,7 @@
 #include "fboss/agent/TxPacket.h"
 #include "fboss/agent/packet/PktUtil.h"
 #include "fboss/agent/test/TestUtils.h"
+#include "fboss/agent/test/agent_hw_tests/AgentMirrorOnDropXgsImpl.h"
 #include "fboss/agent/test/utils/AclTestUtils.h"
 #include "fboss/agent/test/utils/PacketSnooper.h"
 #include "fboss/agent/test/utils/PfcTestUtils.h"
@@ -39,12 +40,17 @@ MirrorOnDropDropReasonCodes egressOnly(uint8_t code) {
 using namespace ::testing;
 
 // Factory: ONE switch — adding a new ASIC means adding one case here.
-// Concrete MirrorOnDropImpl subclasses are registered via follow-on diffs
-// (see AgentMirrorOnDrop<Vendor>Impl.{h,cpp}).
 std::unique_ptr<MirrorOnDropImpl> createMirrorOnDropImpl(cfg::AsicType type) {
-  throw FbossError(
-      "createMirrorOnDropImpl: no MirrorOnDropImpl for AsicType ",
-      static_cast<int>(type));
+  // NOLINTNEXTLINE(clang-diagnostic-switch-enum): default handles all others.
+  switch (type) {
+    case cfg::AsicType::ASIC_TYPE_TOMAHAWK5:
+    case cfg::AsicType::ASIC_TYPE_TOMAHAWK6:
+      return std::make_unique<XgsMirrorOnDropImpl>();
+    default:
+      throw FbossError(
+          "createMirrorOnDropImpl: no MirrorOnDropImpl for AsicType ",
+          static_cast<int>(type));
+  }
 }
 
 MirrorOnDropImpl* AgentMirrorOnDropStatelessTest::impl() {
