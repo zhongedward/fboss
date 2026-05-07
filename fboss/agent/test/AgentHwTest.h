@@ -226,10 +226,14 @@ class AgentHwTest : public ::testing::Test {
         });
   }
   template <typename EcmpHelperT>
-  void unresolveNeighbors(const EcmpHelperT& ecmp, int width) {
-    applyNewState([this, &ecmp, &width](std::shared_ptr<SwitchState> in) {
-      return ecmp.unresolveNextHops(in, width);
-    });
+  void unresolveNeighbors(
+      const EcmpHelperT& ecmp,
+      int width,
+      bool useLinkLocal = false) {
+    applyNewState(
+        [this, &ecmp, width, useLinkLocal](std::shared_ptr<SwitchState> in) {
+          return ecmp.unresolveNextHops(in, width, useLinkLocal);
+        });
   }
   template <typename EcmpHelperT>
   void unprogramRoutes(const EcmpHelperT& ecmp) {
