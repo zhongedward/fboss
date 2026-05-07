@@ -362,4 +362,8 @@ TEST_F(AgentPfcConfigTest, PfcRxEnabledTxDisabled) {
   runPfcTest(true, false);
 }
 
+TEST_F(AgentPfcConfigTest, PfcRxDisabledTxEnabled) {
+  runPfcTest(false, true);
+}
+
 } // namespace facebook::fboss
