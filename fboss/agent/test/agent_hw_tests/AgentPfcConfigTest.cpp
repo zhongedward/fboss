@@ -354,4 +354,8 @@ TEST_F(AgentPfcConfigTest, PfcDefaultProgramming) {
   runPfcNotConfiguredTest(false, false);
 }
 
+TEST_F(AgentPfcConfigTest, PfcRxDisabledTxDisabled) {
+  runPfcTest(false, false);
+}
+
 } // namespace facebook::fboss
