@@ -213,7 +213,7 @@ cfg::SwitchConfig createSwitchConfigPortRif(
   return config;
 }
 
-typedef std::function<void(Cursor* cursor, uint32_t length)> PayloadCheckFn;
+using PayloadCheckFn = std::function<void(Cursor* cursor, uint32_t length)>;
 
 TxMatchFn checkICMPv6Pkt(
     MacAddress srcMac,
@@ -339,7 +339,7 @@ TxMatchFn checkNeighborSolicitation(
       checkPayload);
 }
 
-typedef std::vector<std::pair<IPAddressV6, uint8_t>> PrefixVector;
+using PrefixVector = std::vector<std::pair<IPAddressV6, uint8_t>>;
 TxMatchFn checkRouterAdvert(
     MacAddress srcMac,
     IPAddressV6 srcIP,
