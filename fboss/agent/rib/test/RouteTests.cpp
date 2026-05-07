@@ -1350,6 +1350,167 @@ TEST(Route, resolveRecursiveUcmpIntermediateCostDropped) {
   }
 }
 
+TEST(Route, resolveRecursiveSrv6WithIntermediateLinkLocalCost) {
+  IPv4NetworkToRouteMap v4Routes;
+  IPv6NetworkToRouteMap v6Routes;
+
+  const std::vector<folly::IPAddressV6> segListA{
+      folly::IPAddressV6("2001:db8::1"), folly::IPAddressV6("2001:db8::2")};
+  const std::vector<folly::IPAddressV6> segListB{
+      folly::IPAddressV6("2001:db8::3"), folly::IPAddressV6("2001:db8::4")};
+
+  NextHopIDManager nhopIds;
+  RibRouteUpdater u(&v4Routes, &v6Routes, &nhopIds, nullptr);
+
+  // Covering route for fdad:ff02:10b::d:0 with 2 link-local next hops
+  // that carry cost
+  RouteNextHopSet coverNhopsD;
+  coverNhopsD.emplace(ResolvedNextHop(
+      IPAddress("fe80::1"),
+      InterfaceID(1),
+      ECMP_WEIGHT,
+      std::nullopt,
+      std::nullopt,
+      std::nullopt,
+      std::nullopt,
+      {},
+      std::nullopt,
+      std::nullopt,
+      int64_t(100)));
+  coverNhopsD.emplace(ResolvedNextHop(
+      IPAddress("fe80::2"),
+      InterfaceID(2),
+      ECMP_WEIGHT,
+      std::nullopt,
+      std::nullopt,
+      std::nullopt,
+      std::nullopt,
+      {},
+      std::nullopt,
+      std::nullopt,
+      int64_t(200)));
+
+  // Covering route for fdad:ff02:10b::c:0 with 2 link-local next hops
+  // that carry cost
+  RouteNextHopSet coverNhopsC;
+  coverNhopsC.emplace(ResolvedNextHop(
+      IPAddress("fe80::3"),
+      InterfaceID(3),
+      ECMP_WEIGHT,
+      std::nullopt,
+      std::nullopt,
+      std::nullopt,
+      std::nullopt,
+      {},
+      std::nullopt,
+      std::nullopt,
+      int64_t(300)));
+  coverNhopsC.emplace(ResolvedNextHop(
+      IPAddress("fe80::4"),
+      InterfaceID(4),
+      ECMP_WEIGHT,
+      std::nullopt,
+      std::nullopt,
+      std::nullopt,
+      std::nullopt,
+      {},
+      std::nullopt,
+      std::nullopt,
+      int64_t(400)));
+
+  u.update<RibRouteUpdater::RouteEntry, folly::CIDRNetwork>(
+      kClientA,
+      {
+          {{IPAddress("fdad:ff02:10b::d:0"), 112},
+           RouteNextHopEntry(coverNhopsD, kDistance)},
+          {{IPAddress("fdad:ff02:10b::c:0"), 112},
+           RouteNextHopEntry(coverNhopsC, kDistance)},
+      },
+      {},
+      false);
+
+  // Verify covering routes resolved with cost on their link-local next hops
+  auto covDIt = v6Routes.exactMatch(IPAddressV6("fdad:ff02:10b::d:0"), 112);
+  ASSERT_NE(v6Routes.end(), covDIt);
+  EXPECT_TRUE(covDIt->value()->isResolved());
+  for (const auto& nh : covDIt->value()->getForwardInfo().getNextHopSet()) {
+    EXPECT_TRUE(nh.cost().has_value());
+  }
+
+  auto covCIt = v6Routes.exactMatch(IPAddressV6("fdad:ff02:10b::c:0"), 112);
+  ASSERT_NE(v6Routes.end(), covCIt);
+  EXPECT_TRUE(covCIt->value()->isResolved());
+  for (const auto& nh : covCIt->value()->getForwardInfo().getNextHopSet()) {
+    EXPECT_TRUE(nh.cost().has_value());
+  }
+
+  // BGP route 2001::/64 with 2 next hops, each with distinct SID lists
+  // but no cost
+  RouteNextHopSet bgpNhops;
+  bgpNhops.emplace(UnresolvedNextHop(
+      IPAddress("fdad:ff02:10b::d:0"),
+      ECMP_WEIGHT,
+      std::nullopt,
+      std::nullopt,
+      std::nullopt,
+      std::nullopt,
+      segListA,
+      TunnelType::SRV6_ENCAP,
+      std::string("tunnel_A")));
+  bgpNhops.emplace(UnresolvedNextHop(
+      IPAddress("fdad:ff02:10b::c:0"),
+      ECMP_WEIGHT,
+      std::nullopt,
+      std::nullopt,
+      std::nullopt,
+      std::nullopt,
+      segListB,
+      TunnelType::SRV6_ENCAP,
+      std::string("tunnel_B")));
+
+  RouteV6::Prefix bgpPrefix{IPAddressV6("2001::"), 64};
+
+  u.update<RibRouteUpdater::RouteEntry, folly::CIDRNetwork>(
+      kClientA,
+      {
+          {{bgpPrefix.network(), bgpPrefix.mask()},
+           RouteNextHopEntry(bgpNhops, kDistance)},
+      },
+      {},
+      false);
+
+  auto it = v6Routes.exactMatch(bgpPrefix.network(), bgpPrefix.mask());
+  ASSERT_NE(v6Routes.end(), it);
+  auto route = it->value();
+  EXPECT_TRUE(route->isResolved());
+
+  const auto& resolvedNhops = route->getForwardInfo().getNextHopSet();
+  ASSERT_EQ(resolvedNhops.size(), 4);
+
+  int segListACount = 0;
+  int segListBCount = 0;
+  for (const auto& nh : resolvedNhops) {
+    EXPECT_TRUE(nh.isResolved());
+    EXPECT_FALSE(nh.cost().has_value());
+
+    if (nh.srv6SegmentList() == segListA) {
+      EXPECT_EQ(nh.tunnelType(), TunnelType::SRV6_ENCAP);
+      EXPECT_EQ(nh.tunnelId(), "tunnel_A");
+      EXPECT_TRUE(nh.intf() == InterfaceID(1) || nh.intf() == InterfaceID(2));
+      segListACount++;
+    } else if (nh.srv6SegmentList() == segListB) {
+      EXPECT_EQ(nh.tunnelType(), TunnelType::SRV6_ENCAP);
+      EXPECT_EQ(nh.tunnelId(), "tunnel_B");
+      EXPECT_TRUE(nh.intf() == InterfaceID(3) || nh.intf() == InterfaceID(4));
+      segListBCount++;
+    } else {
+      FAIL() << "Unexpected SID list on resolved next hop";
+    }
+  }
+  EXPECT_EQ(segListACount, 2);
+  EXPECT_EQ(segListBCount, 2);
+}
+
 TEST(RibRouteTables, getVrfList) {
   RoutingInformationBase rib;
 
