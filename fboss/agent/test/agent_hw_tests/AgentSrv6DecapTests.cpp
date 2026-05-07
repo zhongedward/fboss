@@ -119,7 +119,7 @@ class AgentSrv6DecapTest : public AgentHwTest {
 
   void resolveV4AndV6NextHops(int numNextHops) {
     auto ecmpHelper6 = makeEcmpHelper<folly::IPAddressV6>();
-    this->resolveNeighbors(ecmpHelper6, numNextHops);
+    this->resolveNeighbors(ecmpHelper6, numNextHops, true /* useLinkLocal */);
     auto ecmpHelper4 = makeEcmpHelper<folly::IPAddressV4>();
     this->resolveNeighbors(ecmpHelper4, numNextHops);
   }
@@ -150,7 +150,14 @@ class AgentSrv6DecapTest : public AgentHwTest {
     RouteNextHopSet nhops;
     for (auto i = 0; i < numNextHops; ++i) {
       auto nhop = ecmpHelper.nhop(i);
-      nhops.insert(ResolvedNextHop(nhop.ip, nhop.intf, ECMP_WEIGHT));
+      // Use link-local address for IPv6 next hops
+      auto nhopIp = nhop.ip;
+      if constexpr (std::is_same_v<IPAddrT, folly::IPAddressV6>) {
+        if (nhop.linkLocalNhopIp.has_value()) {
+          nhopIp = nhop.linkLocalNhopIp.value();
+        }
+      }
+      nhops.insert(ResolvedNextHop(nhopIp, nhop.intf, ECMP_WEIGHT));
     }
     auto routeUpdater = this->getSw()->getRouteUpdater();
     routeUpdater.addRoute(
