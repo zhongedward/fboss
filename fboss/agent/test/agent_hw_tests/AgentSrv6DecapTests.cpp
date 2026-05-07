@@ -117,11 +117,9 @@ class AgentSrv6DecapTest : public AgentHwTest {
         this->getProgrammedState(), this->getSw()->needL2EntryForNeighbor());
   }
 
-  void resolveV4AndV6NextHops(int numNextHops) {
+  void resolveNextHops(int numNextHops) {
     auto ecmpHelper6 = makeEcmpHelper<folly::IPAddressV6>();
     this->resolveNeighbors(ecmpHelper6, numNextHops, true /* useLinkLocal */);
-    auto ecmpHelper4 = makeEcmpHelper<folly::IPAddressV4>();
-    this->resolveNeighbors(ecmpHelper4, numNextHops);
   }
 
   void setupHelper(bool resolveNeighbors = true, bool addMySid = true) {
@@ -130,7 +128,7 @@ class AgentSrv6DecapTest : public AgentHwTest {
           this->initialConfig(*this->getAgentEnsemble()));
     }
     if (resolveNeighbors) {
-      resolveV4AndV6NextHops(2);
+      resolveNextHops(2);
     }
     // IPv6 route with regular next hops (no SID lists)
     addRoute<folly::CIDRNetworkV6>(
@@ -145,19 +143,13 @@ class AgentSrv6DecapTest : public AgentHwTest {
 
   template <typename CIDRNetworkT>
   void addRoute(const CIDRNetworkT& prefix, int numNextHops) {
-    using IPAddrT = decltype(prefix.first);
-    auto ecmpHelper = makeEcmpHelper<std::remove_const_t<IPAddrT>>();
     RouteNextHopSet nhops;
+    auto ecmpHelper = makeEcmpHelper<folly::IPAddressV6>();
     for (auto i = 0; i < numNextHops; ++i) {
       auto nhop = ecmpHelper.nhop(i);
-      // Use link-local address for IPv6 next hops
-      auto nhopIp = nhop.ip;
-      if constexpr (std::is_same_v<IPAddrT, folly::IPAddressV6>) {
-        if (nhop.linkLocalNhopIp.has_value()) {
-          nhopIp = nhop.linkLocalNhopIp.value();
-        }
-      }
-      nhops.insert(ResolvedNextHop(nhopIp, nhop.intf, ECMP_WEIGHT));
+      CHECK(nhop.linkLocalNhopIp.has_value());
+      nhops.insert(ResolvedNextHop(
+          folly::IPAddress(*nhop.linkLocalNhopIp), nhop.intf, ECMP_WEIGHT));
     }
     auto routeUpdater = this->getSw()->getRouteUpdater();
     routeUpdater.addRoute(
