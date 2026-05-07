@@ -6704,7 +6704,8 @@ std::pair<apache::thrift::ident::srv6SegmentList, ChildThriftPath<::std::vector<
 std::pair<apache::thrift::ident::tunnelType, Child<::facebook::fboss::TunnelType, ::apache::thrift::type_class::enumeration, ::apache::thrift::type::enum_t<::facebook::fboss::TunnelType>>>,
 std::pair<apache::thrift::ident::tunnelId, Child<::std::string, ::apache::thrift::type_class::string, ::apache::thrift::type::string_t>>,
 std::pair<apache::thrift::ident::adjustedWeight, Child<::std::int32_t, ::apache::thrift::type_class::integral, ::apache::thrift::type::i32_t>>,
-std::pair<apache::thrift::ident::topologyInfo, ChildThriftPath<::facebook::fboss::NetworkTopologyInformation, ::facebook::fboss::fsdb::FsdbOperStateRoot, Self>>>;
+std::pair<apache::thrift::ident::topologyInfo, ChildThriftPath<::facebook::fboss::NetworkTopologyInformation, ::facebook::fboss::fsdb::FsdbOperStateRoot, Self>>,
+std::pair<apache::thrift::ident::cost, Child<::std::int64_t, ::apache::thrift::type_class::integral, ::apache::thrift::type::i64_t>>>;
 
   template <typename Name>
   using TypeFor = typename Children::template type_of<Name>;
@@ -6719,6 +6720,7 @@ std::pair<apache::thrift::ident::topologyInfo, ChildThriftPath<::facebook::fboss
     STRUCT_CHILD_GETTERS(tunnelId, 7);
     STRUCT_CHILD_GETTERS(adjustedWeight, 15);
     STRUCT_CHILD_GETTERS(topologyInfo, 16);
+    STRUCT_CHILD_GETTERS(cost, 17);
 
   template <apache::thrift::FieldId __id>
   auto operator()(const std::integral_constant<apache::thrift::FieldId, __id>&) {
@@ -6731,6 +6733,7 @@ std::pair<apache::thrift::ident::topologyInfo, ChildThriftPath<::facebook::fboss
     else if constexpr (__id == apache::thrift::FieldId{7}) { return tunnelId(); }
     else if constexpr (__id == apache::thrift::FieldId{15}) { return adjustedWeight(); }
     else if constexpr (__id == apache::thrift::FieldId{16}) { return topologyInfo(); }
+    else if constexpr (__id == apache::thrift::FieldId{17}) { return cost(); }
   }
 };
 

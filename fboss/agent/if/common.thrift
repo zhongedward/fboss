@@ -62,6 +62,7 @@ struct NextHopThrift {
   */
   15: optional i32 adjustedWeight;
   16: optional NetworkTopologyInformation topologyInfo;
+  17: optional i64 cost;
 }
 
 /*
