@@ -184,15 +184,29 @@ class AgentVoqSwitchIsolationFirmwareTest : public AgentVoqSwitchTest {
     getAgentEnsemble()->runDiagCommand(ss.str(), out, switchId);
   }
   void forceLinkAdminDisable(int portId) {
-    // SAI Implementation for diag shell requires offset of 1024
-    constexpr auto kPortIdOffset = 1024;
+    auto platformMapping = getAgentEnsemble()->getPlatformMapping();
+    const auto& portEntry =
+        platformMapping->getPlatformPort(static_cast<int32_t>(portId));
+    auto iphyLane = portEntry.mapping()->pins()[0].a()->lane().value();
+
+    auto iphyChip = platformMapping->getPortIphyChip(PortID(portId));
+    auto coreId = iphyChip.physicalID().value();
+
+    auto virtualDeviceId = portEntry.mapping()->virtualDeviceId().value();
+    auto firstFabricPort =
+        platformMapping->getFirstFabricPortForVirtualDevice(virtualDeviceId);
+    auto baseCoreId =
+        platformMapping->getPortIphyChip(firstFabricPort).physicalID().value();
+    auto coreIndex = coreId - baseCoreId;
+
+    constexpr int kFabricLanesPerCore = 8;
+    auto portToDisable = coreIndex * kFabricLanesPerCore + iphyLane;
 
     std::stringstream ss;
-    auto portToDisable = portId - kPortIdOffset;
     ss << "edk -c fi force_link_down 0 5 " << portToDisable << " 1"
        << std::endl;
     XLOG(INFO) << "Running force link Admin Disable command to disable port: "
-               << portId;
+               << portId << " asic port index: " << portToDisable;
     auto switchId = this->getCurrentSwitchIdForTesting();
     std::string out;
     getAgentEnsemble()->runDiagCommand(ss.str(), out, switchId);
