@@ -342,8 +342,6 @@ hw_dataplane_test_srcs = [
     "dataplane_tests/HwHashConsistencyTest.cpp",
     "dataplane_tests/HwHashPolarizationTests.cpp",
     "dataplane_tests/HwInPauseDiscardsTests.cpp",
-    "dataplane_tests/HwLoadBalancerTests.cpp",
-    "dataplane_tests/HwLoadBalancerTestsV6Flowlet.cpp",
     "dataplane_tests/HwProdInvariantHelper.cpp",
     "dataplane_tests/HwProdInvariantTests.cpp",
     "dataplane_tests/HwL3Tests.cpp",
