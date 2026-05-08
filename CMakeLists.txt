@@ -1256,9 +1256,7 @@ if(BUILD_SAI_FAKE_BENCHMARKS)
 add_custom_target(fboss_fake_agent_benchmarks)
 
 # SAI_BENCHMARKS defined in cmake/AgentHwSaiBenchmarks.cmake
-foreach(SAI_BENCHMARK IN LISTS SAI_BENCHMARKS)
-    add_dependencies(fboss_fake_agent_benchmarks sai_${SAI_BENCHMARK}-fake)
-endforeach()
+add_dependencies(fboss_fake_agent_benchmarks sai_all_benchmarks-fake)
 endif()
 
 if (BUILD_SAI_FAKE_LINK_TEST)

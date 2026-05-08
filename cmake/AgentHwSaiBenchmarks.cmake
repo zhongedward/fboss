@@ -5,28 +5,9 @@
 
 # NOTE: All the benchmark executables need to link in ${SAI_IMPL_ARG}
 # using '--whole-archive' flag in order to ensure SAI_IMPL symbols are included
-
-function (BUILD_SAI_BENCHMARK NAME SAI_IMPL_NAME SAI_IMPL_ARG)
-  add_executable(sai_${NAME}-${SAI_IMPL_NAME} /dev/null)
-
-  add_sai_sdk_dependencies(sai_${NAME}-${SAI_IMPL_NAME})
-
-  target_link_libraries(sai_${NAME}-${SAI_IMPL_NAME}
-    -Wl,--whole-archive
-    mono_sai_agent_benchmarks_main
-    hw_${NAME}
-    route_scale_gen
-    setup_thrift_prod
-    ${SAI_IMPL_ARG}
-    -Wl,--no-whole-archive
-  )
-  set_target_properties(sai_${NAME}-${SAI_IMPL_NAME}
-    PROPERTIES COMPILE_FLAGS
-    "-DSAI_VER_MAJOR=${SAI_VER_MAJOR} \
-    -DSAI_VER_MINOR=${SAI_VER_MINOR}  \
-    -DSAI_VER_RELEASE=${SAI_VER_RELEASE}"
-  )
-endfunction()
+#
+# All benchmarks are consolidated into a single binary (sai_all_benchmarks-*).
+# Individual benchmarks are selected at runtime via --bm_regex.
 
 set(SAI_BENCHMARKS "")
 list(APPEND SAI_BENCHMARKS fsw_scale_route_add_speed)
@@ -65,16 +46,37 @@ if (SAI_BRCM_IMPL OR BUILD_SAI_FAKE)
   list(APPEND SAI_BENCHMARKS voq_remote_entity_programming)
 endif()
 
+# Build a single consolidated benchmark binary that contains all benchmark
+# registrations. Use --bm_regex at runtime to select which benchmark to run.
+function(BUILD_ALL_SAI_BENCHMARKS SAI_IMPL_NAME SAI_IMPL_ARG)
+  message(STATUS "Building consolidated SAI benchmark binary: sai_all_benchmarks-${SAI_IMPL_NAME}")
 
-function(BUILD_SAI_BENCHMARKS SAI_IMPL_NAME SAI_IMPL_ARG)
-  message(STATUS "Building SAI benchmarks SAI_IMPL_NAME: ${SAI_IMPL_NAME} SAI_IMPL_ARG: ${SAI_IMPL_ARG}")
+  set(_all_hw_libs "")
   foreach(SAI_BENCHMARK IN LISTS SAI_BENCHMARKS)
-    BUILD_SAI_BENCHMARK(${SAI_BENCHMARK} ${SAI_IMPL_NAME} ${SAI_IMPL_ARG})
+    list(APPEND _all_hw_libs hw_${SAI_BENCHMARK})
   endforeach()
+
+  add_executable(sai_all_benchmarks-${SAI_IMPL_NAME} /dev/null)
+  add_sai_sdk_dependencies(sai_all_benchmarks-${SAI_IMPL_NAME})
+  target_link_libraries(sai_all_benchmarks-${SAI_IMPL_NAME}
+    -Wl,--whole-archive
+    mono_sai_agent_benchmarks_main
+    ${_all_hw_libs}
+    route_scale_gen
+    setup_thrift_prod
+    ${SAI_IMPL_ARG}
+    -Wl,--no-whole-archive
+  )
+  set_target_properties(sai_all_benchmarks-${SAI_IMPL_NAME}
+    PROPERTIES COMPILE_FLAGS
+    "-DSAI_VER_MAJOR=${SAI_VER_MAJOR} \
+    -DSAI_VER_MINOR=${SAI_VER_MINOR}  \
+    -DSAI_VER_RELEASE=${SAI_VER_RELEASE}"
+  )
 endfunction()
 
 if(BUILD_SAI_FAKE AND BUILD_SAI_FAKE_BENCHMARKS)
-  BUILD_SAI_BENCHMARKS("fake" fake_sai)
+  BUILD_ALL_SAI_BENCHMARKS("fake" fake_sai)
 endif()
 
 # If libsai_impl is provided, build sai tests linking with it
@@ -82,8 +84,6 @@ find_library(SAI_IMPL sai_impl)
 message(STATUS "SAI_IMPL: ${SAI_IMPL}")
 
 if(SAI_IMPL AND BENCHMARK_INSTALL)
-  BUILD_SAI_BENCHMARKS("sai_impl" ${SAI_IMPL})
-  foreach(SAI_BENCHMARK IN LISTS SAI_BENCHMARKS)
-    install(TARGETS sai_${SAI_BENCHMARK}-sai_impl)
-  endforeach()
+  BUILD_ALL_SAI_BENCHMARKS("sai_impl" ${SAI_IMPL})
+  install(TARGETS sai_all_benchmarks-sai_impl)
 endif()
