@@ -435,7 +435,6 @@ cpp_library(
     ],
     link_whole = True,
     exported_deps = [
-        "//fboss/agent:asic_utils",
         "//fboss/agent/packet:packet",
         "//fboss/agent/packet:packet_factory",
         "//fboss/agent/test:agent_hw_test",
