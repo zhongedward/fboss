@@ -1,5 +1,6 @@
 // (c) Meta Platforms, Inc. and affiliates. Confidential and proprietary.
 
+#include "fboss/agent/FbossError.h"
 #include "fboss/agent/hw/test/ConfigFactory.h"
 #include "fboss/agent/test/AgentHwTest.h"
 #include "fboss/agent/test/utils/ConfigUtils.h"
@@ -368,6 +369,223 @@ TEST_F(AgentPfcConfigTest, PfcRxDisabledTxEnabled) {
 
 TEST_F(AgentPfcConfigTest, PfcRxEnabledTxEnabled) {
   runPfcTest(true, true);
+}
+
+// Try a sequence of configuring, modifying and removing PFC watchdog.
+// This test will be retained as a HwTest given there is a lot of programming
+// followed by reading back from HW.
+TEST_F(AgentPfcConfigTest, PfcWatchdogProgrammingSequence) {
+  auto portId = this->portIdsForTest()[0];
+  cfg::PfcWatchdog prodPfcWdConfig;
+  // The granularity of PFC deadlock timer config in J3 is such that a
+  // config of 200 msec results in 198 msec being programmed in HW. To
+  // avoid a mismatch between SW and HW, ensure that we program 198 msec
+  // so that there is no reprogramming attempt during WB.
+  auto asicType = getAgentEnsemble()->getL3Asics().front()->getAsicType();
+  auto pfcDeadlockDetectionInterval =
+      asicType == cfg::AsicType::ASIC_TYPE_JERICHO3 ? 198 : 200;
+  initalizePfcConfigWatchdogValues(
+      prodPfcWdConfig,
+      pfcDeadlockDetectionInterval,
+      1000,
+      cfg::PfcWatchdogRecoveryAction::NO_DROP);
+
+  auto setup = [=, this]() {
+    setupBaseConfig();
+    // Make sure that we start with no PFC configured
+    verifyPfcWatchdogNotConfigured();
+    auto initialCfg = initialConfig(*getAgentEnsemble());
+    setupPfcAndPfcWatchdog(initialCfg, portId, prodPfcWdConfig);
+  };
+
+  auto verify = [=, this]() {
+    // Initially, we should have the prod config applied!
+    EXPECT_TRUE(
+        getAgentEnsemble()
+            ->getHwAgentTestClient(getSwitchId(portId))
+            ->sync_pfcWatchdogProgrammingMatchesConfig(
+                static_cast<int32_t>(portId), true, prodPfcWdConfig));
+
+    bool pfcRx = false;
+    bool pfcTx = false;
+    cfg::PfcWatchdog defaultPfcWatchdogConfig{};
+    auto currentConfig = initialConfig(*getAgentEnsemble());
+
+    // All PFC WD configuration combinations to test
+    std::vector<PfcWdTestConfigs> configTest;
+    if (getAgentEnsemble()->getL3Asics().front()->getAsicVendor() ==
+        HwAsic::AsicVendor::ASIC_VENDOR_CHENAB) {
+      // Chenab ASIC requires at minimum 200ms DLD/ 400ms DLR intervals
+      configTest.push_back(
+          {200,
+           400,
+           cfg::PfcWatchdogRecoveryAction::DROP,
+           "Verify PFC watchdog is enabled with specified configs"});
+      configTest.push_back(
+          {250,
+           400,
+           cfg::PfcWatchdogRecoveryAction::DROP,
+           "Change just the detection timer and ensure programming"});
+      configTest.push_back(
+          {250,
+           600,
+           cfg::PfcWatchdogRecoveryAction::DROP,
+           "Change just the recovery timer and ensure programming"});
+    } else {
+      configTest.push_back(
+          {5,
+           400,
+           cfg::PfcWatchdogRecoveryAction::DROP,
+           "Verify PFC watchdog is enabled with specified configs"});
+      configTest.push_back(
+          {150,
+           400,
+           cfg::PfcWatchdogRecoveryAction::DROP,
+           "Change just the detection timer and ensure programming"});
+      configTest.push_back(
+          {150,
+           200,
+           cfg::PfcWatchdogRecoveryAction::DROP,
+           "Change just the recovery timer and ensure programming"});
+    }
+
+    // Enable PFC and PFC wachdog
+    for (const auto& wdTestCfg : configTest) {
+      setupPfcWdAndValidateProgramming(wdTestCfg, portId, currentConfig);
+    }
+
+    XLOG(DBG0) << "Verify removing PFC watchdog removes the programming";
+    removePfcWatchdogConfig(currentConfig, portId);
+    EXPECT_TRUE(
+        getAgentEnsemble()
+            ->getHwAgentTestClient(getSwitchId(portId))
+            ->sync_pfcWatchdogProgrammingMatchesConfig(
+                static_cast<int32_t>(portId), false, defaultPfcWatchdogConfig));
+
+    XLOG(DBG0)
+        << "Verify removing PFC watchdog does not impact PFC programming";
+    pfcRx = getAgentEnsemble()
+                ->getHwAgentTestClient(getSwitchId(portId))
+                ->sync_getPfcEnabled(static_cast<int32_t>(portId), true);
+    pfcTx = getAgentEnsemble()
+                ->getHwAgentTestClient(getSwitchId(portId))
+                ->sync_getPfcEnabled(static_cast<int32_t>(portId), false);
+    EXPECT_TRUE(pfcRx);
+    EXPECT_TRUE(pfcTx);
+
+    // Granularity tests which is ASIC specific
+    for (const auto& wdTestCfg : getPfcWdGranularityTestParam()) {
+      setupPfcWdAndValidateProgramming(wdTestCfg, portId, currentConfig);
+    }
+
+    // PFC watchdog deadlock config on multiple ports
+    auto portId2 = this->portIdsForTest()[1];
+    if (getAgentEnsemble()->getL3Asics().front()->getAsicVendor() ==
+        HwAsic::AsicVendor::ASIC_VENDOR_CHENAB) {
+      // Chenab ASIC requires at minimum 200ms DLD/ 400ms DLR intervals
+      setupPfcWdAndValidateProgramming(
+          {200,
+           500,
+           cfg::PfcWatchdogRecoveryAction::DROP,
+           "Enable PFC watchdog on more ports and validate programming"},
+          portId2,
+          currentConfig);
+    } else {
+      setupPfcWdAndValidateProgramming(
+          {140,
+           500,
+           cfg::PfcWatchdogRecoveryAction::DROP,
+           "Enable PFC watchdog on more ports and validate programming"},
+          portId2,
+          currentConfig);
+    }
+
+    XLOG(DBG0) << "Remove PFC watchdog programming on one port and make"
+               << " sure watchdog recovery action is not impacted";
+    removePfcWatchdogConfig(currentConfig, portId);
+    EXPECT_EQ(
+        static_cast<cfg::PfcWatchdogRecoveryAction>(
+            getAgentEnsemble()
+                ->getHwAgentTestClient(getSwitchId(portId2))
+                ->sync_getPfcWatchdogRecoveryAction(
+                    static_cast<int32_t>(portId2))),
+        cfg::PfcWatchdogRecoveryAction::DROP);
+
+    // Validate PFC WD recovery action being reset to default
+    XLOG(DBG0) << "Remove PFC watchdog programming on the remaining port, "
+               << "make sure the watchdog recovery action goes to default";
+    removePfcWatchdogConfig(currentConfig, portId2);
+    EXPECT_TRUE(
+        getAgentEnsemble()
+            ->getHwAgentTestClient(getSwitchId(portId2))
+            ->sync_pfcWatchdogProgrammingMatchesConfig(
+                static_cast<int32_t>(portId2),
+                false,
+                defaultPfcWatchdogConfig));
+
+    if (!getAgentEnsemble()->isSai()) {
+      // In SAI implementation, PFC and PFC WD are separate attributes
+      // and are independently configured, so unconfiguring PFC will not
+      // unconfigure PFC WD.
+      setupPfcWdAndValidateProgramming(
+          {20,
+           100,
+           cfg::PfcWatchdogRecoveryAction::DROP,
+           "Enable PFC watchdog config again on the port"},
+          portId,
+          currentConfig);
+
+      // Unconfigure PFC
+      XLOG(DBG0)
+          << "Verify removing PFC will remove PFC watchdog programming as well";
+      removePfcConfig(currentConfig, portId);
+      pfcRx = getAgentEnsemble()
+                  ->getHwAgentTestClient(getSwitchId(portId))
+                  ->sync_getPfcEnabled(static_cast<int32_t>(portId), true);
+      pfcTx = getAgentEnsemble()
+                  ->getHwAgentTestClient(getSwitchId(portId))
+                  ->sync_getPfcEnabled(static_cast<int32_t>(portId), false);
+      EXPECT_FALSE(pfcRx);
+      EXPECT_FALSE(pfcTx);
+      EXPECT_TRUE(
+          getAgentEnsemble()
+              ->getHwAgentTestClient(getSwitchId(portId))
+              ->sync_pfcWatchdogProgrammingMatchesConfig(
+                  static_cast<int32_t>(portId),
+                  false,
+                  defaultPfcWatchdogConfig));
+    }
+
+    // Verify PFC deadlock recovery action mismatch across ports
+    cfg::PfcWatchdog pfcWatchdogConfig;
+    initalizePfcConfigWatchdogValues(
+        pfcWatchdogConfig, 300, 900, cfg::PfcWatchdogRecoveryAction::DROP);
+    setupPfcAndPfcWatchdog(currentConfig, portId2, pfcWatchdogConfig);
+    XLOG(DBG0) << "Enable PFC watchdog with conflicting recovery action "
+               << "on another port and make sure programming did not happen";
+    // Applying this config will cause a PFC deadlock recovery action
+    // mismatch between ports and will result in FbossError in SwSwitch.
+    // In HwTests we call isValidStateUpdate directly; in AgentHwTest,
+    // the validation happens inside applyNewConfig and throws.
+    {
+      auto savedConfig = currentConfig;
+      EXPECT_THROW(
+          setupPfcAndPfcWatchdog(currentConfig, portId, prodPfcWdConfig),
+          FbossError);
+      currentConfig = savedConfig;
+    }
+
+    XLOG(DBG0)
+        << "Disable PFC on one port and enable with new recovery action on"
+        << " the other port";
+    removePfcConfigSkipApply(currentConfig, portId2);
+
+    // At the end, make sure that we configure prod config, so that
+    // in WB case, we can ensure the config is as expected post WB!
+    setupPfcAndPfcWatchdog(currentConfig, portId, prodPfcWdConfig);
+  };
+
+  verifyAcrossWarmBoots(setup, verify);
 }
 
 } // namespace facebook::fboss
