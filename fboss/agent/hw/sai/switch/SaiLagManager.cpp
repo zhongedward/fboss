@@ -376,4 +376,15 @@ std::optional<HwTrunkStats> SaiLagManager::getHwTrunkStats(
   }
   return handle->counters->getHwTrunkStats();
 }
+
+std::map<std::string, HwTrunkStats> SaiLagManager::getAllHwTrunkStats() const {
+  std::map<std::string, HwTrunkStats> trunkStats;
+  for (const auto& [aggPortId, handle] : handles_) {
+    if (handle->counters) {
+      trunkStats.emplace(
+          handle->counters->trunkName(), handle->counters->getHwTrunkStats());
+    }
+  }
+  return trunkStats;
+}
 } // namespace facebook::fboss

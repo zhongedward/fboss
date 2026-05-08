@@ -2212,6 +2212,11 @@ folly::F14FastMap<std::string, HwPortStats> SaiSwitch::getPortStats() const {
   return getPortStatsLocked(lock);
 }
 
+std::map<std::string, HwTrunkStats> SaiSwitch::getTrunkStats() const {
+  std::lock_guard<std::mutex> lock(saiSwitchMutex_);
+  return managerTable_->lagManager().getAllHwTrunkStats();
+}
+
 CpuPortStats SaiSwitch::getCpuPortStats() const {
   std::lock_guard<std::mutex> lock(saiSwitchMutex_);
   if (!platform_->getAsic()->isSupported(HwAsic::Feature::CPU_PORT)) {
