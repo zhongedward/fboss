@@ -342,6 +342,7 @@ void SaiLagManager::changeBridgePort(
 void SaiLagManager::updateStats(AggregatePortID aggPort) {
   HwTrunkStats stats{};
   utility::clearHwTrunkStats(stats);
+  *stats.capacity_() = 0;
 
   std::optional<std::chrono::seconds> timeRetrieved{};
 
@@ -358,6 +359,15 @@ void SaiLagManager::updateStats(AggregatePortID aggPort) {
       continue;
     }
     utility::accumulateHwTrunkMemberStats(stats, fb303Stats->portStats());
+    auto attributes = member.second->attributes();
+    auto isEgressDisabled =
+        std::get<SaiLagMemberTraits::Attributes::EgressDisable>(attributes)
+            .value();
+    if (!isEgressDisabled) {
+      auto portSpeed =
+          managerTable_->portManager().getSpeed(portIdsIter->second.portID);
+      *stats.capacity_() += static_cast<int64_t>(portSpeed);
+    }
     if (!timeRetrieved) {
       timeRetrieved = fb303Stats->timeRetrieved();
     }
