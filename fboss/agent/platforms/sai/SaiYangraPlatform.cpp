@@ -202,6 +202,11 @@ SaiYangraPlatform::getSaiProfileVendorExtensionValues() const {
   // throttle other TCs.
   kv_map.insert(std::make_pair("SAI_KEY_NO_HQOS_QUEUE_TO_SUBGROUP", "1"));
 
+  // Disable the SDK sniffer; FBOSS does not consume sniffer logs and the
+  // sniffer requires /usr/bin/sx_def_filter which is not staged in the
+  // FBOSS image.
+  kv_map.insert(std::make_pair("SAI_KEY_SDK_SNIFFER_DISABLE", "1"));
+
   return kv_map;
 }
 
