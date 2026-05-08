@@ -14,7 +14,7 @@ import json
 import os
 import subprocess
 import tempfile
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 from run_test import _load_from_file, BenchmarkTestRunner
@@ -26,6 +26,24 @@ from run_test import _load_from_file, BenchmarkTestRunner
 def runner():
     """Create a BenchmarkTestRunner instance for testing"""
     return BenchmarkTestRunner()
+
+
+@pytest.fixture
+def mock_args():
+    """Create a mock args object with common attributes"""
+    args = Mock()
+    args.filter_file = None
+    args.filter = None
+    args.list_tests = False
+    args.config = None
+    args.mgmt_if = "eth0"
+    args.platform_mapping_override_path = None
+    args.fruid_path = None
+    args.sai_logging = "WARN"
+    args.fboss_logging = "WARN"
+    args.test_run_timeout = 300
+    args.skip_known_bad_tests = None
+    return args
 
 
 @pytest.fixture
@@ -42,36 +60,35 @@ def temp_benchmark_file():
 
     yield temp_file
 
-    # Cleanup
     if os.path.exists(temp_file):
         os.unlink(temp_file)
 
 
-# Tests for _get_benchmarks_to_run
+# Tests for _load_requested_benchmarks
 
 
-def test_get_benchmarks_with_filter_file(runner, temp_benchmark_file):
-    """Test loading benchmarks from a custom filter file"""
-    benchmarks = runner._get_benchmarks_to_run(temp_benchmark_file)
+def test_load_requested_with_filter_file(runner, temp_benchmark_file):
+    """Test loading benchmarks from a filter file"""
+    benchmarks = runner._load_requested_benchmarks(temp_benchmark_file)
     assert benchmarks == ["benchmark1", "benchmark2", "benchmark3"]
 
 
-def test_get_benchmarks_with_nonexistent_file(runner, capsys):
+def test_load_requested_with_nonexistent_file(runner, capsys):
     """Test handling of nonexistent filter file"""
-    benchmarks = runner._get_benchmarks_to_run("/nonexistent/file.conf")
+    benchmarks = runner._load_requested_benchmarks("/nonexistent/file.conf")
     assert benchmarks is None
 
     captured = capsys.readouterr()
-    assert "Error: Benchmark configuration file not found" in captured.out
+    assert "Error: Configuration file not found" in captured.out
 
 
-def test_get_benchmarks_with_empty_file(runner, capsys):
-    """Test handling of empty benchmark file"""
+def test_load_requested_with_empty_file(runner, capsys):
+    """Test handling of empty filter file"""
     with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".conf") as f:
         temp_file = f.name
 
     try:
-        benchmarks = runner._get_benchmarks_to_run(temp_file)
+        benchmarks = runner._load_requested_benchmarks(temp_file)
         assert benchmarks is None
 
         captured = capsys.readouterr()
@@ -80,73 +97,109 @@ def test_get_benchmarks_with_empty_file(runner, capsys):
         os.unlink(temp_file)
 
 
-@patch("os.path.exists")
-@patch("run_test._load_from_file")
-def test_get_benchmarks_default_configs(mock_load, mock_exists, runner):
-    """Test loading benchmarks from default T1, T2, and additional configs"""
-    # Mock that all config files exist
-    mock_exists.return_value = True
+# Tests for _get_benchmark_binary
 
-    # Mock different benchmarks from each file
-    mock_load.side_effect = [
-        ["t1_bench1", "t1_bench2"],
-        ["t2_bench1", "t2_bench2"],
-        ["additional_bench1"],
+
+def test_get_benchmark_binary_exists(runner):
+    """Test finding benchmark binary when it exists"""
+    with (
+        patch("os.path.exists", return_value=True),
+        patch("os.path.isfile", return_value=True),
+    ):
+        path = runner._get_benchmark_binary()
+    assert path is not None
+    assert "sai_all_benchmarks" in path
+
+
+def test_get_benchmark_binary_missing(runner):
+    """Test returning None when binary doesn't exist"""
+    with patch("os.path.exists", return_value=False):
+        assert runner._get_benchmark_binary() is None
+
+
+# Tests for _list_benchmarks
+
+
+def test_list_benchmarks_success(runner):
+    """Test discovering benchmarks from --bm_list output"""
+    bm_list_output = (
+        "This test program does NOT link in any test case.\n"
+        "[==========] Running 0 tests from 0 test suites.\n"
+        "[==========] 0 tests from 0 test suites ran. (0 ms total)\n"
+        "[  PASSED  ] 0 tests.\n"
+        "HwFswScaleRouteAddBenchmark\n"
+        "HwEcmpGroupShrink\n"
+        "RibResolutionBenchmark\n"
+        '{\n  "cpu_time_usec": 911,\n  "max_rss": 47872\n}\n'
+    )
+    with patch("subprocess.check_output", return_value=bm_list_output):
+        result = runner._list_benchmarks("/opt/fboss/bin/sai_all_benchmarks-sai_impl")
+
+    assert result == [
+        "HwFswScaleRouteAddBenchmark",
+        "HwEcmpGroupShrink",
+        "RibResolutionBenchmark",
     ]
 
-    benchmarks = runner._get_benchmarks_to_run(None)
 
-    # Should return all benchmarks combined (as a list from a set, order may vary)
-    assert set(benchmarks) == {
-        "t1_bench1",
-        "t1_bench2",
-        "t2_bench1",
-        "t2_bench2",
-        "additional_bench1",
-    }
-    assert len(benchmarks) == 5
+def test_list_benchmarks_filters_json_and_noise(runner):
+    """Test that JSON properties, gtest output, and other noise are filtered"""
+    bm_list_output = (
+        "This test program does NOT link in any test case.\n"
+        "[==========] Running 0 tests from 0 test suites.\n"
+        "[  PASSED  ] 0 tests.\n"
+        "HwEcmpGroupShrink\n"
+        "{\n"
+        '  "cpu_time_usec": 911,\n'
+        '  "max_rss": 47872\n'
+        "}\n"
+        "Some random debug line with spaces\n"
+        "runTxSlowPathBenchmark\n"
+    )
+    with patch("subprocess.check_output", return_value=bm_list_output):
+        result = runner._list_benchmarks("/opt/fboss/bin/sai_all_benchmarks-sai_impl")
+
+    assert result == ["HwEcmpGroupShrink", "runTxSlowPathBenchmark"]
 
 
-@patch("os.path.exists")
-@patch("run_test._load_from_file")
-def test_get_benchmarks_missing_default_configs(mock_load, mock_exists, runner, capsys):
-    """Test handling when some default config files are missing"""
-    # Mock that only T1 config exists
-    mock_exists.side_effect = [True, False, False]
-    mock_load.return_value = ["t1_bench1", "t1_bench2"]
+def test_list_benchmarks_failure(runner, capsys):
+    """Test handling of --bm_list failure"""
+    with patch(
+        "subprocess.check_output",
+        side_effect=subprocess.CalledProcessError(1, "cmd"),
+    ):
+        result = runner._list_benchmarks("/opt/fboss/bin/sai_all_benchmarks-sai_impl")
 
-    benchmarks = runner._get_benchmarks_to_run(None)
-
-    assert set(benchmarks) == {"t1_bench1", "t1_bench2"}
-
+    assert result is None
     captured = capsys.readouterr()
-    assert "Warning: Configuration file not found" in captured.out
+    assert "Warning: Failed to list benchmarks" in captured.out
 
 
-@patch("os.path.exists")
-def test_get_benchmarks_all_default_configs_missing(mock_exists, runner, capsys):
-    """Test handling when all default config files are missing"""
-    mock_exists.return_value = False
+def test_list_benchmarks_timeout(runner):
+    """Test handling of --bm_list timeout"""
+    with patch(
+        "subprocess.check_output",
+        side_effect=subprocess.TimeoutExpired("cmd", 30),
+    ):
+        result = runner._list_benchmarks("/opt/fboss/bin/sai_all_benchmarks-sai_impl")
 
-    benchmarks = runner._get_benchmarks_to_run(None)
-
-    assert benchmarks is None
-    captured = capsys.readouterr()
-    assert "Error: No benchmarks found" in captured.out
+    assert result is None
 
 
 # Tests for _parse_benchmark_output
 
 
-def test_parse_benchmark_output_success(runner):
-    """Test parsing successful --json benchmark output"""
+def test_parse_benchmark_output_with_name(runner):
+    """Test parsing with benchmark_name extracts timing directly"""
     stdout = '{"RibResolutionBenchmark": 1460000000000}\n{"cpu_time_usec": 1460000, "max_rss": 123456}\n'
 
-    result = runner._parse_benchmark_output("test_binary", stdout)
+    result = runner._parse_benchmark_output(
+        "test_binary", stdout, benchmark_name="RibResolutionBenchmark"
+    )
 
     assert result["benchmark_binary_name"] == "test_binary"
     assert result["benchmark_test_name"] == "RibResolutionBenchmark"
-    assert result["test_status"] == "OK"
+    assert result["benchmark_time_ps"] == "1460000000000"
     assert result["cpu_time_usec"] == "1460000"
     assert result["max_rss"] == "123456"
     assert result["metrics"]["RibResolutionBenchmark"] == 1460000000000
@@ -156,34 +209,36 @@ def test_parse_benchmark_output_with_rx_pps(runner):
     """Test parsing output with cpu_rx_pps metric"""
     stdout = '{"RxSlowPathBenchmark": 1460000000000}\n{"cpu_rx_pps": 200000}\n{"cpu_time_usec": 1460000, "max_rss": 123456}\n'
 
-    result = runner._parse_benchmark_output("test_binary", stdout)
+    result = runner._parse_benchmark_output(
+        "test_binary", stdout, benchmark_name="RxSlowPathBenchmark"
+    )
 
-    assert result["test_status"] == "OK"
     assert result["benchmark_test_name"] == "RxSlowPathBenchmark"
+    assert result["benchmark_time_ps"] == "1460000000000"
     assert result["cpu_rx_pps"] == "200000"
     assert result["metrics"]["cpu_rx_pps"] == 200000
-    assert result["metrics"]["RxSlowPathBenchmark"] == 1460000000000
 
 
-def test_parse_benchmark_output_missing_rusage(runner):
-    """Test parsing output with missing rusage JSON"""
-    stdout = '{"RibResolutionBenchmark": 1460000000000}\n'
+def test_parse_benchmark_output_name_not_in_json(runner):
+    """Test that benchmark_name is preserved even when not in JSON output"""
+    stdout = '{"cpu_time_usec": 1460000, "max_rss": 123456}\n'
 
-    result = runner._parse_benchmark_output("test_binary", stdout)
+    result = runner._parse_benchmark_output(
+        "test_binary", stdout, benchmark_name="HwEcmpGroupShrink"
+    )
 
-    assert result["benchmark_test_name"] == "RibResolutionBenchmark"
-    assert result["test_status"] == "FAILED"
-    assert result["cpu_time_usec"] == ""
+    assert result["benchmark_test_name"] == "HwEcmpGroupShrink"
+    assert result["benchmark_time_ps"] == ""
+    assert result["cpu_time_usec"] == "1460000"
 
 
-def test_parse_benchmark_output_missing_benchmark(runner):
-    """Test parsing output with only rusage JSON (no benchmark name)"""
+def test_parse_benchmark_output_no_name(runner):
+    """Test parsing without benchmark_name leaves test_name empty"""
     stdout = '{"cpu_time_usec": 1460000, "max_rss": 123456}\n'
 
     result = runner._parse_benchmark_output("test_binary", stdout)
 
     assert result["benchmark_test_name"] == ""
-    assert result["test_status"] == "FAILED"
     assert result["cpu_time_usec"] == "1460000"
 
 
@@ -192,7 +247,6 @@ def test_parse_benchmark_output_empty(runner):
     result = runner._parse_benchmark_output("test_binary", "")
 
     assert result["benchmark_test_name"] == ""
-    assert result["test_status"] == "FAILED"
     assert result["metrics"] == {}
 
 
@@ -200,11 +254,25 @@ def test_parse_benchmark_output_with_noise(runner):
     """Test parsing output with non-JSON text interspersed"""
     stdout = 'DMA pool size: 16777216\n{"HwEcmpGroupShrink": 1460000000000}\nSome debug output\n{"cpu_time_usec": 1460000, "max_rss": 123456}\n'
 
-    result = runner._parse_benchmark_output("test_binary", stdout)
+    result = runner._parse_benchmark_output(
+        "test_binary", stdout, benchmark_name="HwEcmpGroupShrink"
+    )
 
-    assert result["test_status"] == "OK"
     assert result["benchmark_test_name"] == "HwEcmpGroupShrink"
-    assert result["metrics"]["HwEcmpGroupShrink"] == 1460000000000
+    assert result["benchmark_time_ps"] == "1460000000000"
+
+
+def test_parse_benchmark_output_extra_metrics_dont_confuse(runner):
+    """Test that extra numeric metrics don't affect name/timing when benchmark_name is provided"""
+    stdout = '{"max_mp_group_size": 42}\n{"HwEcmpGroupShrink": 1460000000000}\n{"cpu_time_usec": 1460000, "max_rss": 123456}\n'
+
+    result = runner._parse_benchmark_output(
+        "test_binary", stdout, benchmark_name="HwEcmpGroupShrink"
+    )
+
+    assert result["benchmark_test_name"] == "HwEcmpGroupShrink"
+    assert result["benchmark_time_ps"] == "1460000000000"
+    assert result["metrics"]["max_mp_group_size"] == 42
 
 
 # Tests for _run_benchmark_binary
@@ -223,16 +291,40 @@ def _mock_popen(stdout_text, returncode=0):
 
 @patch("subprocess.Popen")
 def test_run_benchmark_binary_success(mock_popen_cls, runner, mock_args):
-    """Test successful benchmark binary execution"""
+    """Test successful benchmark binary execution with benchmark_name"""
     mock_popen_cls.return_value = _mock_popen(
         '{"TestBenchmark": 2500000000000}\n{"cpu_time_usec": 2500000, "max_rss": 200000}\n'
     )
 
-    result = runner._run_benchmark_binary("/opt/fboss/bin/test_bench", mock_args)
+    result = runner._run_benchmark_binary(
+        "/opt/fboss/bin/test_bench", mock_args, benchmark_name="TestBenchmark"
+    )
 
     assert result["test_status"] == "OK"
     assert result["benchmark_test_name"] == "TestBenchmark"
+    assert result["benchmark_time_ps"] == "2500000000000"
     mock_popen_cls.assert_called_once()
+
+
+@patch("subprocess.Popen")
+def test_run_benchmark_binary_with_bm_regex(mock_popen_cls, runner, mock_args):
+    """Test benchmark execution with --bm_regex for specific test selection"""
+    mock_popen_cls.return_value = _mock_popen(
+        '{"HwEcmpGroupShrink": 2500000000000}\n{"cpu_time_usec": 2500000, "max_rss": 200000}\n'
+    )
+
+    result = runner._run_benchmark_binary(
+        "/opt/fboss/bin/sai_all_benchmarks-sai_impl",
+        mock_args,
+        benchmark_name="HwEcmpGroupShrink",
+    )
+
+    assert result["test_status"] == "OK"
+    assert result["benchmark_test_name"] == "HwEcmpGroupShrink"
+
+    call_args = mock_popen_cls.call_args[0][0]
+    assert "--bm_regex" in call_args
+    assert "^HwEcmpGroupShrink$" in call_args
 
 
 @patch("subprocess.Popen")
@@ -245,9 +337,25 @@ def test_run_benchmark_binary_timeout(mock_popen_cls, runner, mock_args):
     result = runner._run_benchmark_binary("/opt/fboss/bin/test_bench", mock_args)
 
     assert result["test_status"] == "TIMEOUT"
-    assert result["benchmark_binary_name"] == "/opt/fboss/bin/test_bench"
     assert result["benchmark_test_name"] == ""
     mock_proc.kill.assert_called_once()
+
+
+@patch("subprocess.Popen")
+def test_run_benchmark_binary_timeout_preserves_name(mock_popen_cls, runner, mock_args):
+    """Test that timeout preserves benchmark_name when provided"""
+    mock_proc = _mock_popen("")
+    mock_proc.wait.side_effect = subprocess.TimeoutExpired("cmd", 300)
+    mock_popen_cls.return_value = mock_proc
+
+    result = runner._run_benchmark_binary(
+        "/opt/fboss/bin/sai_all_benchmarks-sai_impl",
+        mock_args,
+        benchmark_name="HwEcmpGroupShrink",
+    )
+
+    assert result["test_status"] == "TIMEOUT"
+    assert result["benchmark_test_name"] == "HwEcmpGroupShrink"
 
 
 @patch("subprocess.Popen")
@@ -258,18 +366,58 @@ def test_run_benchmark_binary_failure(mock_popen_cls, runner, mock_args):
     result = runner._run_benchmark_binary("/opt/fboss/bin/test_bench", mock_args)
 
     assert result["test_status"] == "FAILED"
-    mock_popen_cls.assert_called_once()
 
 
 @patch("subprocess.Popen")
-def test_run_benchmark_binary_exception(mock_popen_cls, runner, mock_args):
-    """Test benchmark binary execution with exception"""
+def test_run_benchmark_binary_exception_preserves_name(
+    mock_popen_cls, runner, mock_args
+):
+    """Test that exception preserves benchmark_name when provided"""
     mock_popen_cls.side_effect = Exception("Unexpected error")
 
-    result = runner._run_benchmark_binary("/opt/fboss/bin/test_bench", mock_args)
+    result = runner._run_benchmark_binary(
+        "/opt/fboss/bin/sai_all_benchmarks-sai_impl",
+        mock_args,
+        benchmark_name="HwEcmpGroupShrink",
+    )
 
     assert result["test_status"] == "FAILED"
-    assert result["benchmark_binary_name"] == "/opt/fboss/bin/test_bench"
+    assert result["benchmark_test_name"] == "HwEcmpGroupShrink"
+
+
+@patch("subprocess.Popen")
+def test_run_benchmark_binary_exit_code_determines_status(
+    mock_popen_cls, runner, mock_args
+):
+    """Test that exit code 0 means OK even without JSON benchmark output"""
+    mock_popen_cls.return_value = _mock_popen(
+        '{"cpu_time_usec": 244392642, "max_rss": 4581460}\n', returncode=0
+    )
+
+    result = runner._run_benchmark_binary(
+        "/opt/fboss/bin/sai_all_benchmarks-sai_impl",
+        mock_args,
+        benchmark_name="HwEcmpGroupShrink",
+    )
+
+    assert result["test_status"] == "OK"
+    assert result["benchmark_test_name"] == "HwEcmpGroupShrink"
+
+
+@patch("subprocess.Popen")
+def test_run_benchmark_binary_nonzero_exit_is_failed(mock_popen_cls, runner, mock_args):
+    """Test that non-zero exit code means FAILED even with valid JSON output"""
+    mock_popen_cls.return_value = _mock_popen(
+        '{"HwEcmpGroupShrink": 1460000000000}\n{"cpu_time_usec": 1460000, "max_rss": 123456}\n',
+        returncode=1,
+    )
+
+    result = runner._run_benchmark_binary(
+        "/opt/fboss/bin/test_bench", mock_args, benchmark_name="HwEcmpGroupShrink"
+    )
+
+    assert result["test_status"] == "FAILED"
+    assert result["benchmark_test_name"] == "HwEcmpGroupShrink"
 
 
 @patch("subprocess.Popen")
@@ -291,189 +439,357 @@ def test_run_benchmark_binary_with_config(mock_popen_cls, runner, mock_args):
     assert "eth1" in call_args
 
 
-# Tests for run_test method
+# Tests for run_test
 
 
-def test_run_test_with_nonexistent_filter_file(runner, mock_args, capsys):
-    """Test run_test with nonexistent filter file"""
-    mock_args.filter_file = "/nonexistent/file.conf"
+def _make_ok_result(name):
+    return {
+        "benchmark_binary_name": "/opt/fboss/bin/sai_all_benchmarks-sai_impl",
+        "benchmark_test_name": name,
+        "benchmark_time_ps": "1000",
+        "test_status": "OK",
+        "cpu_time_usec": "100",
+        "max_rss": "200",
+        "cpu_rx_pps": "",
+        "cpu_tx_pps": "",
+        "metrics": {name: 1000},
+    }
+
+
+@patch.object(BenchmarkTestRunner, "_get_benchmark_binary")
+def test_run_test_no_binary(mock_get_bin, runner, mock_args, capsys):
+    """Test run_test when binary not found"""
+    mock_get_bin.return_value = None
 
     runner.run_test(mock_args)
 
     captured = capsys.readouterr()
-    assert "Error: Benchmark configuration file not found" in captured.out
+    assert "Could not find benchmark binary" in captured.out
 
 
-def test_run_test_list_tests_mode(runner, mock_args, temp_benchmark_file, capsys):
-    """Test run_test in list_tests mode"""
-    mock_args.filter_file = temp_benchmark_file
-    mock_args.list_tests = True
-
-    runner.run_test(mock_args)
-
-    captured = capsys.readouterr()
-    assert "benchmark1" in captured.out
-    assert "benchmark2" in captured.out
-    assert "benchmark3" in captured.out
-
-
-@patch("run_test._load_from_file")
-@patch("os.path.exists")
-@patch("os.path.isfile")
+@patch.object(BenchmarkTestRunner, "_write_results_and_summary")
 @patch.object(BenchmarkTestRunner, "_run_benchmark_binary")
-@patch("builtins.open", create=True)
-def test_run_test_execution(
-    mock_open,
-    mock_run_binary,
-    mock_isfile,
-    mock_exists,
-    mock_load,
-    runner,
-    mock_args,
-    temp_benchmark_file,
+@patch.object(BenchmarkTestRunner, "_list_benchmarks")
+@patch.object(BenchmarkTestRunner, "_get_benchmark_binary")
+def test_run_test_basic_flow(
+    mock_get_bin, mock_list, mock_run, mock_write, runner, mock_args
 ):
-    """Test run_test executes benchmarks and writes CSV"""
-    mock_args.filter_file = temp_benchmark_file
-
-    # Mock that all benchmark binaries exist
-    mock_exists.return_value = True
-    mock_isfile.return_value = True
-    mock_load.return_value = ["benchmark1", "benchmark2", "benchmark3"]
-
-    # Mock benchmark execution results
-    mock_run_binary.side_effect = [
-        {
-            "benchmark_binary_name": "/opt/fboss/bin/benchmark1",
-            "benchmark_test_name": "Bench1",
-            "test_status": "OK",
-            "cpu_time_usec": "1000000",
-            "max_rss": "100000",
-            "cpu_rx_pps": "",
-            "cpu_tx_pps": "",
-            "metrics": {"Bench1": 1000000000000},
-        },
-        {
-            "benchmark_binary_name": "/opt/fboss/bin/benchmark2",
-            "benchmark_test_name": "Bench2",
-            "test_status": "OK",
-            "cpu_time_usec": "2000000",
-            "max_rss": "200000",
-            "cpu_rx_pps": "",
-            "cpu_tx_pps": "",
-            "metrics": {"Bench2": 2000000000000},
-        },
-        {
-            "benchmark_binary_name": "/opt/fboss/bin/benchmark3",
-            "benchmark_test_name": "Bench3",
-            "test_status": "OK",
-            "cpu_time_usec": "3000000",
-            "max_rss": "300000",
-            "cpu_rx_pps": "",
-            "cpu_tx_pps": "",
-            "metrics": {"Bench3": 3000000000000},
-        },
-    ]
-
-    # Mock CSV file writing
-    mock_file = MagicMock()
-    mock_open.return_value.__enter__.return_value = mock_file
+    """Test run_test runs all discovered benchmarks by default"""
+    mock_get_bin.return_value = "/opt/fboss/bin/sai_all_benchmarks-sai_impl"
+    mock_list.return_value = ["BenchA", "BenchB", "BenchC"]
+    mock_run.return_value = _make_ok_result("BenchA")
 
     runner.run_test(mock_args)
 
-    # Verify all benchmarks were executed
-    assert mock_run_binary.call_count == 3
-
-    # Verify CSV file was opened for writing
-    mock_open.assert_called_once()
-    assert ".csv" in str(mock_open.call_args)
+    assert mock_run.call_count == 3
+    for call in mock_run.call_args_list:
+        assert call[1].get("benchmark_name") is not None
+    mock_write.assert_called_once()
 
 
-@patch("run_test._load_from_file")
-@patch("os.path.exists")
-@patch("os.path.isfile")
-def test_run_test_no_existing_binaries(
-    mock_isfile, mock_exists, mock_load, runner, mock_args, temp_benchmark_file, capsys
+@patch.object(BenchmarkTestRunner, "_write_results_and_summary")
+@patch.object(BenchmarkTestRunner, "_run_benchmark_binary")
+@patch.object(BenchmarkTestRunner, "_load_requested_benchmarks")
+@patch.object(BenchmarkTestRunner, "_list_benchmarks")
+@patch.object(BenchmarkTestRunner, "_get_benchmark_binary")
+def test_run_test_with_filter_file(
+    mock_get_bin, mock_list, mock_load, mock_run, mock_write, runner, mock_args
 ):
-    """Test run_test when no benchmark binaries exist"""
-    mock_args.filter_file = temp_benchmark_file
+    """Test --filter_file narrows benchmarks to those in the file"""
+    mock_get_bin.return_value = "/opt/fboss/bin/sai_all_benchmarks-sai_impl"
+    mock_list.return_value = ["BenchA", "BenchB", "BenchC"]
+    mock_load.return_value = ["BenchA", "BenchB"]
+    mock_args.filter_file = "/some/file.conf"
+    mock_run.return_value = _make_ok_result("BenchA")
 
-    # Mock loading benchmarks from filter file
-    mock_load.return_value = ["benchmark1", "benchmark2", "benchmark3"]
-    # Mock that the filter file exists but benchmark binaries don't
-    mock_exists.side_effect = lambda path: path == temp_benchmark_file
-    mock_isfile.return_value = False
+    runner.run_test(mock_args)
+
+    assert mock_run.call_count == 2
+    mock_write.assert_called_once()
+
+
+@patch.object(BenchmarkTestRunner, "_write_results_and_summary")
+@patch.object(BenchmarkTestRunner, "_run_benchmark_binary")
+@patch.object(BenchmarkTestRunner, "_list_benchmarks")
+@patch.object(BenchmarkTestRunner, "_get_benchmark_binary")
+def test_run_test_pre_filters_known_bad(
+    mock_get_bin, mock_list, mock_run, mock_write, runner, mock_args, capsys
+):
+    """Test that known-bad tests are skipped BEFORE running"""
+    mock_get_bin.return_value = "/opt/fboss/bin/sai_all_benchmarks-sai_impl"
+    mock_list.return_value = ["BenchA", "HwVoqTest", "BenchC"]
+    mock_run.return_value = _make_ok_result("BenchA")
+    mock_args.skip_known_bad_tests = "brcm/10.2.0.0_odp/tomahawk4"
+
+    with (
+        patch.object(
+            BenchmarkTestRunner,
+            "_load_known_bad_test_regexes",
+            return_value=[".*Voq.*"],
+        ),
+        patch.object(
+            BenchmarkTestRunner, "_load_benchmark_thresholds", return_value={}
+        ),
+    ):
+        runner.run_test(mock_args)
+
+    assert mock_run.call_count == 2
+    captured = capsys.readouterr()
+    assert "SKIPPING (known bad): HwVoqTest" in captured.out
+    mock_write.assert_called_once()
+    assert mock_write.call_args[0][1] == 1
+
+
+@patch.object(BenchmarkTestRunner, "_write_results_and_summary")
+@patch.object(BenchmarkTestRunner, "_run_benchmark_binary")
+@patch.object(BenchmarkTestRunner, "_list_benchmarks")
+@patch.object(BenchmarkTestRunner, "_get_benchmark_binary")
+def test_run_test_filter_exact_match(
+    mock_get_bin, mock_list, mock_run, _mock_write, runner, mock_args
+):
+    """Test --filter with exact name matches one benchmark"""
+    mock_get_bin.return_value = "/opt/fboss/bin/sai_all_benchmarks-sai_impl"
+    mock_list.return_value = ["BenchA", "BenchB", "HwEcmpGroupShrink"]
+    mock_args.filter = "HwEcmpGroupShrink"
+    mock_run.return_value = _make_ok_result("HwEcmpGroupShrink")
+
+    runner.run_test(mock_args)
+
+    assert mock_run.call_count == 1
+    assert mock_run.call_args[1]["benchmark_name"] == "HwEcmpGroupShrink"
+
+
+@patch.object(BenchmarkTestRunner, "_write_results_and_summary")
+@patch.object(BenchmarkTestRunner, "_run_benchmark_binary")
+@patch.object(BenchmarkTestRunner, "_list_benchmarks")
+@patch.object(BenchmarkTestRunner, "_get_benchmark_binary")
+def test_run_test_filter_regex_match(
+    mock_get_bin, mock_list, mock_run, _mock_write, runner, mock_args
+):
+    """Test --filter with regex pattern matches multiple benchmarks"""
+    mock_get_bin.return_value = "/opt/fboss/bin/sai_all_benchmarks-sai_impl"
+    mock_list.return_value = [
+        "HwFswScaleRouteAddBenchmark",
+        "HwFswScaleRouteDelBenchmark",
+        "HwEcmpGroupShrink",
+    ]
+    mock_args.filter = ".*Route.*"
+    mock_run.return_value = _make_ok_result("HwFswScaleRouteAddBenchmark")
+
+    runner.run_test(mock_args)
+
+    assert mock_run.call_count == 2
+
+
+@patch.object(BenchmarkTestRunner, "_list_benchmarks")
+@patch.object(BenchmarkTestRunner, "_get_benchmark_binary")
+def test_run_test_filter_no_match(mock_get_bin, mock_list, runner, mock_args, capsys):
+    """Test --filter with no matches prints error and returns"""
+    mock_get_bin.return_value = "/opt/fboss/bin/sai_all_benchmarks-sai_impl"
+    mock_list.return_value = ["BenchA", "BenchB"]
+    mock_args.filter = "NonExistent"
 
     runner.run_test(mock_args)
 
     captured = capsys.readouterr()
-    assert "Error: No benchmark binaries found" in captured.out
+    assert "No benchmarks matching" in captured.out
 
 
-@patch("run_test._load_from_file")
-@patch("os.path.exists")
-@patch("os.path.isfile")
-def test_run_test_some_missing_binaries(
-    mock_isfile, mock_exists, mock_load, runner, mock_args, temp_benchmark_file, capsys
+@patch.object(BenchmarkTestRunner, "_list_benchmarks")
+@patch.object(BenchmarkTestRunner, "_get_benchmark_binary")
+def test_run_test_filter_invalid_regex(
+    mock_get_bin, mock_list, runner, mock_args, capsys
 ):
-    """Test run_test when some benchmark binaries are missing"""
-    mock_args.filter_file = temp_benchmark_file
+    """Test --filter with invalid regex prints error and returns"""
+    mock_get_bin.return_value = "/opt/fboss/bin/sai_all_benchmarks-sai_impl"
+    mock_list.return_value = ["BenchA", "BenchB"]
+    mock_args.filter = "[invalid"
 
-    mock_load.return_value = ["benchmark1", "benchmark2", "benchmark3"]
+    runner.run_test(mock_args)
 
-    # Mock that filter file exists and only benchmark1 binary exists
-    def exists_side_effect(path):
-        return path == temp_benchmark_file or "benchmark1" in path
+    captured = capsys.readouterr()
+    assert "Invalid --filter regex" in captured.out
 
-    def isfile_side_effect(path):
-        return "benchmark1" in path
 
-    mock_exists.side_effect = exists_side_effect
-    mock_isfile.side_effect = isfile_side_effect
+@patch.object(BenchmarkTestRunner, "_load_requested_benchmarks")
+@patch.object(BenchmarkTestRunner, "_list_benchmarks")
+@patch.object(BenchmarkTestRunner, "_get_benchmark_binary")
+def test_run_test_filter_file_not_found_in_binary(
+    mock_get_bin, mock_list, mock_load, runner, mock_args, capsys
+):
+    """Test warning when filter_file entries are not found in binary"""
+    mock_get_bin.return_value = "/opt/fboss/bin/sai_all_benchmarks-sai_impl"
+    mock_list.return_value = ["BenchA"]
+    mock_load.return_value = ["BenchA", "NonExistentBench"]
+    mock_args.filter_file = "/some/file.conf"
 
-    # Mock benchmark execution
     with (
         patch.object(BenchmarkTestRunner, "_run_benchmark_binary") as mock_run,
-        patch("builtins.open", create=True),
+        patch.object(BenchmarkTestRunner, "_write_results_and_summary"),
     ):
-        mock_run.return_value = {
-            "benchmark_binary_name": "/opt/fboss/bin/benchmark1",
-            "benchmark_test_name": "Bench1",
-            "test_status": "OK",
-            "cpu_time_usec": "1000000",
-            "max_rss": "100000",
-            "cpu_rx_pps": "",
-            "cpu_tx_pps": "",
-            "metrics": {"Bench1": 1000000000000},
-        }
-
+        mock_run.return_value = _make_ok_result("BenchA")
         runner.run_test(mock_args)
 
     captured = capsys.readouterr()
-    assert "Warning:" in captured.out
-    assert "benchmark binaries not found" in captured.out
+    assert "NonExistentBench" in captured.out
+    assert "not found in binary" in captured.out
 
 
-# Integration tests
-
-
-@patch("os.path.exists")
-@patch("run_test._load_from_file")
-def test_integration_default_configs_to_list_tests(
-    mock_load, mock_exists, runner, mock_args, capsys
-):
-    """Integration test: load from default configs and list tests"""
-    # Mock default config files exist
-    mock_exists.return_value = True
-    mock_load.side_effect = [["t1_bench"], ["t2_bench"], ["additional_bench"]]
-
+@patch.object(BenchmarkTestRunner, "_list_benchmarks")
+@patch.object(BenchmarkTestRunner, "_get_benchmark_binary")
+def test_run_test_list_tests(mock_get_bin, mock_list, runner, mock_args, capsys):
+    """Test --list_tests prints all discovered benchmarks"""
+    mock_get_bin.return_value = "/opt/fboss/bin/sai_all_benchmarks-sai_impl"
+    mock_list.return_value = ["BenchA", "BenchB"]
     mock_args.list_tests = True
 
     runner.run_test(mock_args)
 
     captured = capsys.readouterr()
-    assert "t1_bench" in captured.out
-    assert "t2_bench" in captured.out
-    assert "additional_bench" in captured.out
+    assert "BenchA" in captured.out
+    assert "BenchB" in captured.out
+
+
+@patch.object(BenchmarkTestRunner, "_list_benchmarks")
+@patch.object(BenchmarkTestRunner, "_get_benchmark_binary")
+def test_run_test_discovery_failure(mock_get_bin, mock_list, runner, mock_args, capsys):
+    """Test run_test when benchmark discovery fails"""
+    mock_get_bin.return_value = "/opt/fboss/bin/sai_all_benchmarks-sai_impl"
+    mock_list.return_value = None
+
+    runner.run_test(mock_args)
+
+    captured = capsys.readouterr()
+    assert "Could not discover benchmarks" in captured.out
+
+
+# Tests for _write_results_and_summary
+
+
+def test_write_results_and_summary_csv_and_counts(runner, capsys, tmp_path):
+    """Test CSV output and summary counts"""
+    os.chdir(tmp_path)
+    results = [
+        _make_ok_result("BenchA"),
+        _make_ok_result("BenchB"),
+    ]
+    results[0]["threshold_status"] = "PASS"
+    results[0]["threshold_details"] = ""
+    results[1]["threshold_status"] = "NO_THRESHOLD"
+    results[1]["threshold_details"] = ""
+
+    runner._write_results_and_summary(results, skipped_count=1)
+
+    captured = capsys.readouterr()
+    assert "OK: 2" in captured.out
+    assert "Skipped (known bad, pre-filtered): 1" in captured.out
+    assert "BENCHMARK RESULTS SUMMARY" in captured.out
+    assert "BenchA: OK [THRESHOLD PASS]" in captured.out
+
+    csv_files = list(tmp_path.glob("benchmark_results_*.csv"))
+    assert len(csv_files) == 1
+    content = csv_files[0].read_text()
+    assert "benchmark_time_ps" in content
+    assert "BenchA" in content
+
+
+def test_write_results_and_summary_exits_on_failure(runner, tmp_path):
+    """Test that sys.exit(1) is called when benchmarks fail"""
+    os.chdir(tmp_path)
+    results = [_make_ok_result("BenchA")]
+    results[0]["test_status"] = "FAILED"
+    results[0]["threshold_status"] = "N/A"
+    results[0]["threshold_details"] = ""
+
+    with pytest.raises(SystemExit) as exc_info:
+        runner._write_results_and_summary(results)
+
+    assert exc_info.value.code == 1
+
+
+# Tests for _apply_threshold_check
+
+
+def test_apply_threshold_check_pass(runner):
+    """Test threshold check marks result as PASS"""
+    result = _make_ok_result("HwEcmpGroupShrink")
+    result["metrics"]["HwEcmpGroupShrink"] = 10000000000000
+    thresholds = {
+        "fboss.agent.hw.sai.benchmarks.sai_bench_test.HwEcmpGroupShrink": [
+            {
+                "test_config_regex": ".*/tomahawk4.*",
+                "thresholds": [
+                    {
+                        "metric_key_regex": "HwEcmpGroupShrink",
+                        "upper_bound": 25000000000000,
+                    }
+                ],
+            }
+        ]
+    }
+
+    runner._apply_threshold_check(
+        result,
+        "/opt/fboss/bin/sai_all_benchmarks-sai_impl",
+        "brcm/10.2.0.0_odp/tomahawk4",
+        thresholds,
+    )
+
+    assert result["threshold_status"] == "PASS"
+
+
+def test_apply_threshold_check_exceeded(runner):
+    """Test threshold check marks result as EXCEEDED"""
+    result = _make_ok_result("HwEcmpGroupShrink")
+    result["metrics"]["HwEcmpGroupShrink"] = 30000000000000
+    thresholds = {
+        "fboss.agent.hw.sai.benchmarks.sai_bench_test.HwEcmpGroupShrink": [
+            {
+                "test_config_regex": ".*/tomahawk4.*",
+                "thresholds": [
+                    {
+                        "metric_key_regex": "HwEcmpGroupShrink",
+                        "upper_bound": 25000000000000,
+                    }
+                ],
+            }
+        ]
+    }
+
+    runner._apply_threshold_check(
+        result,
+        "/opt/fboss/bin/sai_all_benchmarks-sai_impl",
+        "brcm/10.2.0.0_odp/tomahawk4",
+        thresholds,
+    )
+
+    assert result["threshold_status"] == "EXCEEDED"
+
+
+def test_apply_threshold_check_no_platform_key(runner):
+    """Test threshold check is N/A when no platform key"""
+    result = _make_ok_result("BenchA")
+
+    runner._apply_threshold_check(
+        result, "/opt/fboss/bin/sai_all_benchmarks-sai_impl", None, {}
+    )
+
+    assert result["threshold_status"] == "N/A"
+
+
+def test_apply_threshold_check_failed_status(runner):
+    """Test threshold check is N/A when test status is not OK"""
+    result = _make_ok_result("BenchA")
+    result["test_status"] = "FAILED"
+
+    runner._apply_threshold_check(
+        result,
+        "/opt/fboss/bin/sai_all_benchmarks-sai_impl",
+        "brcm/10.2.0.0_odp/tomahawk4",
+        {"some": "thresholds"},
+    )
+
+    assert result["threshold_status"] == "N/A"
 
 
 # Tests for _load_from_file
@@ -607,7 +923,7 @@ def temp_sai_bench_config():
                     "thresholds": [
                         {
                             "metric_key_regex": "HwEcmpGroupShrink",
-                            "upper_bound": 25000000000000,  # picoseconds
+                            "upper_bound": 25000000000000,
                         }
                     ],
                 }
@@ -644,7 +960,6 @@ def test_load_known_bad_test_regexes_exact_key(runner, temp_sai_bench_config):
     """Test loading known bad tests with exact key match"""
     with patch("run_test.SAI_BENCH_CONFIG", new=temp_sai_bench_config):
         regexes = runner._load_known_bad_test_regexes("brcm/10.2.0.0_odp/tomahawk4")
-    # Should get regexes from exact key only (no suffix appending)
     assert ".*Voq.*" in regexes
     assert "HwInitAndExitFabricBenchmark" in regexes
 
@@ -660,47 +975,36 @@ def test_load_known_bad_test_regexes_no_match(runner, temp_sai_bench_config):
 
 
 def test_find_thresholds_mono_match(runner, temp_sai_bench_config):
-    """Test finding thresholds for a mono benchmark by metric key in output"""
+    """Test finding thresholds for a mono benchmark"""
     with patch("run_test.SAI_BENCH_CONFIG", new=temp_sai_bench_config):
         all_thresholds = runner._load_benchmark_thresholds()
     metrics = {"HwEcmpGroupShrink": 10000000000000, "cpu_time_usec": 123}
     thresholds = runner._find_thresholds_for_benchmark(
-        metrics,
-        is_multi_switch=False,
-        platform_key="brcm/10.2.0.0_odp/tomahawk4",
-        all_thresholds=all_thresholds,
+        metrics, False, "brcm/10.2.0.0_odp/tomahawk4", all_thresholds
     )
     assert len(thresholds) == 1
     assert thresholds[0]["metric_key_regex"] == "HwEcmpGroupShrink"
-    assert thresholds[0]["upper_bound"] == 25000000000000
 
 
 def test_find_thresholds_multi_switch_match(runner, temp_sai_bench_config):
-    """Test finding thresholds for a multi-switch benchmark by metric key"""
+    """Test finding thresholds for a multi-switch benchmark"""
     with patch("run_test.SAI_BENCH_CONFIG", new=temp_sai_bench_config):
         all_thresholds = runner._load_benchmark_thresholds()
     metrics = {"RxSlowPathBenchmark": 1460000000000, "cpu_rx_pps": 200000}
     thresholds = runner._find_thresholds_for_benchmark(
-        metrics,
-        is_multi_switch=True,
-        platform_key="brcm/10.2.0.0_odp/tomahawk4",
-        all_thresholds=all_thresholds,
+        metrics, True, "brcm/10.2.0.0_odp/tomahawk4", all_thresholds
     )
     assert len(thresholds) == 1
     assert thresholds[0]["metric_key_regex"] == "cpu_rx_pps"
-    assert thresholds[0]["lower_bound"] == 138800
 
 
 def test_find_thresholds_no_match(runner, temp_sai_bench_config):
-    """Test finding thresholds when no output metric matches any config key"""
+    """Test finding thresholds when no metric matches"""
     with patch("run_test.SAI_BENCH_CONFIG", new=temp_sai_bench_config):
         all_thresholds = runner._load_benchmark_thresholds()
     metrics = {"NonExistentBenchmark": 100, "cpu_time_usec": 123}
     thresholds = runner._find_thresholds_for_benchmark(
-        metrics,
-        is_multi_switch=False,
-        platform_key="brcm/10.2.0.0_odp/tomahawk4",
-        all_thresholds=all_thresholds,
+        metrics, False, "brcm/10.2.0.0_odp/tomahawk4", all_thresholds
     )
     assert thresholds == []
 
@@ -711,10 +1015,7 @@ def test_find_thresholds_platform_mismatch(runner, temp_sai_bench_config):
         all_thresholds = runner._load_benchmark_thresholds()
     metrics = {"HwEcmpGroupShrink": 10000000000000}
     thresholds = runner._find_thresholds_for_benchmark(
-        metrics,
-        is_multi_switch=False,
-        platform_key="brcm/10.2.0.0_odp/tomahawk5",
-        all_thresholds=all_thresholds,
+        metrics, False, "brcm/10.2.0.0_odp/tomahawk5", all_thresholds
     )
     assert thresholds == []
 
@@ -724,29 +1025,18 @@ def test_find_thresholds_platform_mismatch(runner, temp_sai_bench_config):
 
 def test_check_thresholds_pass(runner):
     """Test threshold check when metric is within bounds"""
-    result = {
-        "metrics": {"HwEcmpGroupShrink": 10000000000000},  # 10s in picoseconds
-    }
+    result = {"metrics": {"HwEcmpGroupShrink": 10000000000000}}
     thresholds = [
-        {
-            "metric_key_regex": "HwEcmpGroupShrink",
-            "upper_bound": 25000000000000,  # 25s in picoseconds
-        }
+        {"metric_key_regex": "HwEcmpGroupShrink", "upper_bound": 25000000000000}
     ]
-    violations = runner._check_thresholds(result, thresholds)
-    assert violations == []
+    assert runner._check_thresholds(result, thresholds) == []
 
 
 def test_check_thresholds_upper_exceeded(runner):
     """Test threshold check when metric exceeds upper bound"""
-    result = {
-        "metrics": {"HwEcmpGroupShrink": 30000000000000},  # 30s in picoseconds
-    }
+    result = {"metrics": {"HwEcmpGroupShrink": 30000000000000}}
     thresholds = [
-        {
-            "metric_key_regex": "HwEcmpGroupShrink",
-            "upper_bound": 25000000000000,  # 25s in picoseconds
-        }
+        {"metric_key_regex": "HwEcmpGroupShrink", "upper_bound": 25000000000000}
     ]
     violations = runner._check_thresholds(result, thresholds)
     assert len(violations) == 1
@@ -755,9 +1045,7 @@ def test_check_thresholds_upper_exceeded(runner):
 
 def test_check_thresholds_lower_violated(runner):
     """Test threshold check when metric is below lower bound"""
-    result = {
-        "metrics": {"cpu_rx_pps": 100000},
-    }
+    result = {"metrics": {"cpu_rx_pps": 100000}}
     thresholds = [{"metric_key_regex": "cpu_rx_pps", "lower_bound": 138800}]
     violations = runner._check_thresholds(result, thresholds)
     assert len(violations) == 1
@@ -766,44 +1054,30 @@ def test_check_thresholds_lower_violated(runner):
 
 def test_check_thresholds_missing_metric_no_violation(runner):
     """Test that missing metric does not cause violation"""
-    result = {
-        "metrics": {"SomeOtherBenchmark": 10000000000000},
-    }
+    result = {"metrics": {"SomeOtherBenchmark": 10000000000000}}
     thresholds = [
-        {
-            "metric_key_regex": "HwEcmpGroupShrink",
-            "upper_bound": 25000000000000,
-        }
+        {"metric_key_regex": "HwEcmpGroupShrink", "upper_bound": 25000000000000}
     ]
-    violations = runner._check_thresholds(result, thresholds)
-    assert violations == []
+    assert runner._check_thresholds(result, thresholds) == []
 
 
 def test_parse_benchmark_output_folly_json_format(runner):
-    """Test parsing folly --json output format (JSON object with name: picoseconds)"""
-    stdout = """{
-  "RibResolutionBenchmark": 1460000000000
-}
-{"cpu_time_usec": 1460000, "max_rss": 123456}
-"""
-    result = runner._parse_benchmark_output("test_binary", stdout)
-    assert result["test_status"] == "OK"
+    """Test parsing folly --json output format with benchmark_name"""
+    stdout = '{\n  "RibResolutionBenchmark": 1460000000000\n}\n{"cpu_time_usec": 1460000, "max_rss": 123456}\n'
+    result = runner._parse_benchmark_output(
+        "test_binary", stdout, benchmark_name="RibResolutionBenchmark"
+    )
     assert result["benchmark_test_name"] == "RibResolutionBenchmark"
+    assert result["benchmark_time_ps"] == "1460000000000"
     assert result["metrics"]["RibResolutionBenchmark"] == 1460000000000
-    assert result["cpu_time_usec"] == "1460000"
-    assert result["max_rss"] == "123456"
 
 
 def test_parse_benchmark_output_folly_json_with_pps(runner):
     """Test parsing folly --json output with cpu_rx_pps metric"""
-    stdout = """{
-  "RxSlowPathBenchmark": 500000000
-}
-{"cpu_rx_pps": 200000}
-{"cpu_time_usec": 500000, "max_rss": 98765}
-"""
-    result = runner._parse_benchmark_output("sai_rx_slow_path_rate-sai_impl", stdout)
-    assert result["test_status"] == "OK"
+    stdout = '{\n  "RxSlowPathBenchmark": 500000000\n}\n{"cpu_rx_pps": 200000}\n{"cpu_time_usec": 500000, "max_rss": 98765}\n'
+    result = runner._parse_benchmark_output(
+        "test_binary", stdout, benchmark_name="RxSlowPathBenchmark"
+    )
     assert result["benchmark_test_name"] == "RxSlowPathBenchmark"
-    assert result["metrics"]["RxSlowPathBenchmark"] == 500000000
+    assert result["benchmark_time_ps"] == "500000000"
     assert result["cpu_rx_pps"] == "200000"

@@ -209,13 +209,12 @@ T1 Link tests scope is controlled by the known-bad and unsupported test files, s
 
 ### Agent Benchmark Tests
 
-`run_test.py`:
+`run_test.py` discovers all benchmarks from the binary via `--bm_list` and runs each one.
+
 ```bash
 ./bin/run_test.py benchmark \
---filter_file ./share/hw_benchmark_tests/t1_benchmarks.conf
-```
-
-```bash file=../fboss/oss/hw_benchmark_tests/t1_benchmarks.conf
+--config ./share/hw_test_configs/$CONFIG \
+--skip-known-bad-tests $KEY
 ```
 
 ### SAI Tests
@@ -252,10 +251,7 @@ T1 Link tests scope is controlled by the known-bad and unsupported test files, s
 `run_test.py`:
 ```bash
 ./bin/run_test.py benchmark \
---filter_file ./share/hw_benchmark_tests/t2_benchmarks.conf
-```
-
-```bash file=../fboss/oss/hw_benchmark_tests/t2_benchmarks.conf
+--filter ".*Scale.*"
 ```
 
 ### SAI Tests
