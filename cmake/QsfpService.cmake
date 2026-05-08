@@ -148,7 +148,6 @@ add_library(icetea800bc_bsp
 
 target_link_libraries(icetea800bc_bsp
   bsp_platform_mapping
-  bsp_platform_mapping_cpp2
   FBThrift::thriftcpp2
 )
 
