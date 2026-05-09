@@ -670,6 +670,12 @@ class CmisModule : public QsfpModule {
    */
   void enableRxLfInsertionForTunableOptics();
 
+  bool isRxConsActHoldOffTmrImplSupported() const override;
+
+  void configureRxConsActHoldOffTimer(
+      int32_t timerMs,
+      bool isExplicitlyConfigured);
+
   /*
    * returns the tunable optics laser status and laser frequency
    */

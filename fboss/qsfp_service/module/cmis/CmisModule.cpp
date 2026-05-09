@@ -3425,6 +3425,43 @@ void CmisModule::enableRxLfInsertionForTunableOptics() {
       << "Enabled Rx LF insertion (rxConsAct=0x1) for tunable optics";
 }
 
+bool CmisModule::isRxConsActHoldOffTmrImplSupported() const {
+  auto info = QsfpFieldInfo<CmisField, CmisPages>::getQsfpFieldAddress(
+      cmisFields, CmisField::HOST_LANE_PROV_AD);
+  const uint8_t* data =
+      getQsfpValuePtr(info.dataAddress, info.offset, info.length);
+  return (*data & RX_CONS_ACT_HOLD_OFF_TMR_IMPL_MASK) != 0;
+}
+
+void CmisModule::configureRxConsActHoldOffTimer(
+    int32_t timerMs,
+    bool isExplicitlyConfigured) {
+  if (timerMs < 0 || timerMs > 655350 || timerMs % 10 != 0) {
+    throw FbossError(
+        "Hold-off timer must be a non-negative multiple of 10ms "
+        "in range [0, 655350]: ",
+        timerMs);
+  }
+  int32_t registerValue = timerMs / 10;
+  if (isRxConsActHoldOffTmrImplSupported()) {
+    uint16_t regVal = static_cast<uint16_t>(registerValue);
+    uint8_t timerData[2];
+    timerData[0] = static_cast<uint8_t>((regVal >> 8) & 0xFF);
+    timerData[1] = static_cast<uint8_t>(regVal & 0xFF);
+    writeCmisField(CmisField::CONS_ACT_HOLD_OFF_TMR, timerData);
+    QSFP_LOG(INFO, this) << "Configured Rx Consequent Action Hold-off Timer to "
+                         << timerMs << "ms (register value=" << regVal << ")";
+  } else if (isExplicitlyConfigured) {
+    throw FbossError(
+        "Module does not advertise rxConsActHoldOffTmrImpl "
+        "(Page 45h, Byte 129, Bit 2). Cannot configure hold-off timer.");
+  } else {
+    QSFP_LOG(INFO, this)
+        << "Hold-off timer not configured and module does not support it. "
+        << "Skipping hold-off timer programming.";
+  }
+}
+
 bool CmisModule::tcvrPortStateSupported(TransceiverPortState& portState) const {
   lock_guard<std::mutex> g(qsfpModuleMutex_);
   auto currTransmitterTechnology = getQsfpTransmitterTechnology();
@@ -3590,6 +3627,11 @@ void CmisModule::programTunableModule(
   const auto& centerFreq = freqConfig->centerFrequencyConfig();
 
   QSFP_LOG(INFO, this) << "Program tunable optics module";
+  configureRxConsActHoldOffTimer(
+      *opticalChannelConfig.rxConsActHoldOffTimerMs(),
+      apache::thrift::is_non_optional_field_set_manually_or_by_serializer(
+          opticalChannelConfig.rxConsActHoldOffTimerMs()));
+
   // Disable TX and RX squelch on all lanes
   disableTxRxSquelchForTunableOptics();
 
