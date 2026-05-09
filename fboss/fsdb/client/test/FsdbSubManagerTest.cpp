@@ -280,19 +280,27 @@ class FsdbSubManagerTest : public ::testing::Test,
     return *testPublisher_;
   }
 
-  std::unique_ptr<Subscriber> createSubscriber(
-      std::string clientId,
-      int grHoldTimer = 0) {
+  SubscriptionOptions getSubscriptionOptions(const std::string& clientId) {
+    return SubscriptionOptions(clientId, IsStats);
+  }
+
+  SubscriptionOptions getSubscriptionOptions(
+      const std::string& clientId,
+      int grHoldTimer) {
+    return SubscriptionOptions(clientId, IsStats, grHoldTimer);
+  }
+
+  std::unique_ptr<Subscriber> createSubscriber(SubscriptionOptions options) {
     CHECK(connectionOptions_);
-    SubscriptionOptions options(clientId, IsStats, grHoldTimer);
     return std::make_unique<Subscriber>(
         std::move(options), *connectionOptions_);
   }
 
   template <typename PathT>
-  std::unique_ptr<Subscriber>
-  createSubscriber(std::string clientId, PathT path, int grHoldTimer = 0) {
-    auto subscriber = createSubscriber(std::move(clientId), grHoldTimer);
+  std::unique_ptr<Subscriber> createSubscriber(
+      SubscriptionOptions options,
+      PathT path) {
+    auto subscriber = createSubscriber(std::move(options));
     subscriber->addPath(std::move(path));
     return subscriber;
   }
@@ -371,9 +379,9 @@ class FsdbSubManagerTest : public ::testing::Test,
   }
 
   std::unique_ptr<Subscriber> createExtendedSubscriber(
-      std::string clientId,
+      SubscriptionOptions options,
       std::vector<ExtendedOperPath> paths) {
-    auto subscriber = createSubscriber(std::move(clientId));
+    auto subscriber = createSubscriber(std::move(options));
     for (auto& path : paths) {
       subscriber->addExtendedPath(std::move(path));
     }
@@ -431,7 +439,8 @@ using SubscriberTypes =
 TYPED_TEST_SUITE(FsdbSubManagerTest, SubscriberTypes);
 
 TYPED_TEST(FsdbSubManagerTest, subUnsub) {
-  auto subscriber = this->createSubscriber("test", this->root().agent());
+  auto subscriber = this->createSubscriber(
+      this->getSubscriptionOptions("test"), this->root().agent());
   auto boundData = subscriber->subscribeBound();
   WITH_RETRIES(EXPECT_EVENTUALLY_TRUE(this->isSubscribed("test")));
   subscriber.reset();
@@ -440,7 +449,8 @@ TYPED_TEST(FsdbSubManagerTest, subUnsub) {
 
 TYPED_TEST(FsdbSubManagerTest, subUnsubNoFsdb) {
   this->killFsdb();
-  auto subscriber = this->createSubscriber("test", this->root().agent());
+  auto subscriber = this->createSubscriber(
+      this->getSubscriptionOptions("test"), this->root().agent());
   auto boundData = subscriber->subscribeBound();
   sleep(3);
   subscriber.reset();
@@ -448,7 +458,8 @@ TYPED_TEST(FsdbSubManagerTest, subUnsubNoFsdb) {
 
 TYPED_TEST(FsdbSubManagerTest, subBeforeFsdbUp) {
   this->killFsdb();
-  auto subscriber = this->createSubscriber("test", this->root().agent());
+  auto subscriber = this->createSubscriber(
+      this->getSubscriptionOptions("test"), this->root().agent());
   auto boundData = subscriber->subscribeBound();
   sleep(3);
   this->createFsdbServerAndPublisher();
@@ -459,7 +470,8 @@ TYPED_TEST(FsdbSubManagerTest, subBeforeFsdbUp) {
 TYPED_TEST(FsdbSubManagerTest, subUpdateUnsub) {
   auto data1 = this->data1("foo");
   this->connectPublisherAndPublish(this->path1(), data1);
-  auto subscriber = this->createSubscriber("test", this->root().agent());
+  auto subscriber = this->createSubscriber(
+      this->getSubscriptionOptions("test"), this->root().agent());
   auto boundData = subscriber->subscribeBound();
   WITH_RETRIES({
     ASSERT_EVENTUALLY_TRUE(this->isSubscribed("test"));
@@ -477,7 +489,8 @@ TYPED_TEST(FsdbSubManagerTest, subUpdateUnsub) {
 }
 
 TYPED_TEST(FsdbSubManagerTest, subBeforePublisher) {
-  auto subscriber = this->createSubscriber("test", this->root().agent());
+  auto subscriber = this->createSubscriber(
+      this->getSubscriptionOptions("test"), this->root().agent());
   auto boundData = subscriber->subscribeBound();
   WITH_RETRIES(EXPECT_EVENTUALLY_TRUE(this->isSubscribed("test")));
   EXPECT_FALSE(*boundData.rlock());
@@ -496,7 +509,8 @@ TYPED_TEST(FsdbSubManagerTest, subMultiPath) {
   auto data1 = this->data1("foo");
   auto data2 = this->data2(123);
   this->connectPublisherAndPublish(this->path1(), data1);
-  auto subscriber = this->createSubscriber("test");
+  auto subscriber =
+      this->createSubscriber(this->getSubscriptionOptions("test"));
   SubscriptionKey path1SubKey = subscriber->addPath(this->path1());
   SubscriptionKey path2SubKey = subscriber->addPath(this->path2());
 
@@ -538,7 +552,8 @@ TYPED_TEST(FsdbSubManagerTest, subDeleteKeys) {
 
   // Subscribe to only key1 and key2 using extended paths
   auto subscriber = this->createExtendedSubscriber(
-      "test", this->mapKeyExtPaths({"key1", "key2"}));
+      this->getSubscriptionOptions("test"),
+      this->mapKeyExtPaths({"key1", "key2"}));
 
   auto boundData = subscriber->subscribeBound();
 
@@ -578,8 +593,8 @@ TYPED_TEST(FsdbSubManagerTest, subDeleteKeys) {
 TYPED_TEST(FsdbSubManagerTest, subscribeExtended) {
   auto data1 = this->data1("foo");
   this->connectPublisherAndPublish(this->path1(), data1);
-  auto subscriber =
-      this->createExtendedSubscriber("test", this->extSubscriptionPaths());
+  auto subscriber = this->createExtendedSubscriber(
+      this->getSubscriptionOptions("test"), this->extSubscriptionPaths());
 
   // verify initial sync
   auto boundData = subscriber->subscribeBound();
@@ -603,7 +618,8 @@ TYPED_TEST(FsdbSubManagerTest, restartPublisher) {
   auto data1 = this->data1("foo");
   this->connectPublisherAndPublish(this->path1(), data1);
   std::optional<SubscriptionState> lastStateSeen;
-  auto subscriber = this->createSubscriber("test", this->root().agent());
+  auto subscriber = this->createSubscriber(
+      this->getSubscriptionOptions("test"), this->root().agent());
   auto boundData = subscriber->subscribeBound(
       [&](auto, auto newState, std::optional<bool> /*initialSyncHasData*/) {
         lastStateSeen = newState;
@@ -632,8 +648,8 @@ TYPED_TEST(FsdbSubManagerTest, verifyGR) {
 
   std::optional<SubscriptionState> lastStateSeen;
   int numUpdates = 0;
-  auto subscriber =
-      this->createSubscriber("test", this->root().agent(), 3 /* grHoldTimer */);
+  auto subscriber = this->createSubscriber(
+      this->getSubscriptionOptions("test", 3), this->root().agent());
   subscriber->subscribe(
       [&](auto update) { numUpdates++; },
       [&](auto, auto newState, std::optional<bool> /*initialSyncHasData*/) {
@@ -683,7 +699,8 @@ TYPED_TEST(FsdbSubManagerHbTest, verifyHeartbeatCb) {
   std::optional<SubscriptionState> lastStateSeen;
   std::optional<int64_t> lastPublishedAt;
   int numHeartbeats{0};
-  auto subscriber = this->createSubscriber("test", this->root().agent());
+  auto subscriber = this->createSubscriber(
+      this->getSubscriptionOptions("test"), this->root().agent());
   subscriber->subscribe(
       [&](auto update) {
         if (update.lastPublishedAt.has_value()) {
