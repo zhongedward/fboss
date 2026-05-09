@@ -58,6 +58,18 @@ TemperatureConfig createTemperatureConfig(
   return config;
 }
 
+VersionedPmSensor createVersionedPmSensor(
+    const std::string& productName,
+    const std::vector<PmSensor>& sensors) {
+  VersionedPmSensor vs;
+  vs.productProductionState() = 0;
+  vs.productVersion() = 0;
+  vs.productSubVersion() = 0;
+  vs.productName() = productName;
+  vs.sensors() = sensors;
+  return vs;
+}
+
 SensorConfig createBasicSensorConfig() {
   SensorConfig config;
   PmUnitSensors pmUnitSensors;
@@ -231,6 +243,64 @@ TEST(ConfigValidatorTest, InvalidPowerConfigEmptyInputVoltageSensors) {
   EXPECT_FALSE(ConfigValidator().isValid(config));
 }
 
+TEST(
+    ConfigValidatorTest,
+    ValidPowerConfigInputVoltageSensorInAllVersionedSensors) {
+  // VIN appears in every versionedSensors entry → safe to reference.
+  // Supports vendor-specific thresholds with a shared sensor name.
+  auto config = createBasicSensorConfig();
+  auto vinSensor = createPmSensor(
+      "PSU1_VIN", "/run/devmap/sensors/PSU1_VIN", SensorType::VOLTAGE);
+  config.pmUnitSensorsList()->at(0).versionedSensors() = {
+      createVersionedPmSensor("AC_PSU", {vinSensor}),
+      createVersionedPmSensor("DC_PSU", {vinSensor})};
+
+  config.powerConfig() = createPowerConfig(
+      {createPerSlotPowerConfig("PSU1", "POWER_SENSOR")},
+      {},
+      0.0,
+      {"PSU1_VIN"});
+  EXPECT_TRUE(ConfigValidator().isValidPowerConfig(config));
+}
+
+TEST(
+    ConfigValidatorTest,
+    InvalidPowerConfigInputVoltageSensorMissingFromOneVersionedSensor) {
+  // VIN missing from one entry → runtime would fail on that hardware → reject.
+  auto config = createBasicSensorConfig();
+  config.pmUnitSensorsList()->at(0).versionedSensors() = {
+      createVersionedPmSensor(
+          "AC_PSU",
+          {createPmSensor(
+              "PSU1_VIN",
+              "/run/devmap/sensors/PSU1_VIN",
+              SensorType::VOLTAGE)}),
+      createVersionedPmSensor(
+          "DC_PSU",
+          {createPmSensor(
+              "PSU1_VOUT",
+              "/run/devmap/sensors/PSU1_VOUT",
+              SensorType::VOLTAGE)})};
+
+  config.powerConfig() = createPowerConfig(
+      {createPerSlotPowerConfig("PSU1", "POWER_SENSOR")},
+      {},
+      0.0,
+      {"PSU1_VIN"});
+  EXPECT_FALSE(ConfigValidator().isValid(config));
+}
+
+TEST(ConfigValidatorTest, InvalidPowerConfigInputVoltageSensorNotInAnySensors) {
+  // Typo / undefined VIN → reject.
+  auto config = createBasicSensorConfig();
+  config.powerConfig() = createPowerConfig(
+      {createPerSlotPowerConfig("PSU1", "POWER_SENSOR")},
+      {},
+      0.0,
+      {"NONEXISTENT_VIN"});
+  EXPECT_FALSE(ConfigValidator().isValid(config));
+}
+
 TEST(ConfigValidatorTest, InvalidPowerConfigNaming) {
   auto config = createBasicSensorConfig();
 
@@ -369,6 +439,9 @@ TEST(ConfigValidatorTest, GetAllSensorNames) {
 }
 
 TEST(ConfigValidatorTest, GetAllUniversalSensorNames) {
+  // Single versioned entry — all of its names are in the per-PmUnit
+  // intersection (intersection with itself), so they show up in the universal
+  // set alongside base sensors and asicCommand.
   SensorConfig config;
   PmUnitSensors pmUnitSensors;
   pmUnitSensors.slotPath() = "/SCB_SLOT@0";
@@ -388,12 +461,60 @@ TEST(ConfigValidatorTest, GetAllUniversalSensorNames) {
   asicCommand.cmd() = "echo 42";
   config.asicCommand() = asicCommand;
 
-  auto universalSensorNames =
-      ConfigValidator().getAllUniversalSensorNames(config);
-  EXPECT_EQ(universalSensorNames.size(), 3);
-  EXPECT_TRUE(universalSensorNames.contains("TEMP_SENSOR"));
-  EXPECT_TRUE(universalSensorNames.contains("FAN_SENSOR"));
-  EXPECT_TRUE(universalSensorNames.contains("ASIC_TEMP_CMD"));
+  const std::unordered_set<std::string> expected = {
+      "TEMP_SENSOR",
+      "FAN_SENSOR",
+      "VERSIONED_TEMP",
+      "VERSIONED_FAN",
+      "ASIC_TEMP_CMD"};
+  EXPECT_EQ(ConfigValidator().getAllUniversalSensorNames(config), expected);
+}
+
+TEST(ConfigValidatorTest, GetAllUniversalSensorNamesMultipleVersionedSensors) {
+  // PmUnit A: A_SHARED is in both entries → kept; A_ONLY_IN_* in one each →
+  // dropped. PmUnit B: B_COMMON in all three → kept; B_EXTRA in one → dropped.
+  // Intersection is per-PmUnit, then unioned with base sensors and asicCmd.
+  SensorConfig config;
+
+  PmUnitSensors pmUnitA;
+  pmUnitA.slotPath() = "/A_SLOT@0";
+  pmUnitA.pmUnitName() = "A";
+  pmUnitA.sensors() = {createPmSensor("A_BASE", "/run/devmap/sensors/A_BASE")};
+  VersionedPmSensor a1, a2;
+  a1.productProductionState() = 0;
+  a1.sensors() = {
+      createPmSensor("A_SHARED", "/run/devmap/sensors/A_SHARED"),
+      createPmSensor("A_ONLY_IN_1", "/run/devmap/sensors/A_ONLY_IN_1")};
+  a2.productProductionState() = 1;
+  a2.sensors() = {
+      createPmSensor("A_SHARED", "/run/devmap/sensors/A_SHARED"),
+      createPmSensor("A_ONLY_IN_2", "/run/devmap/sensors/A_ONLY_IN_2")};
+  pmUnitA.versionedSensors() = {a1, a2};
+
+  PmUnitSensors pmUnitB;
+  pmUnitB.slotPath() = "/B_SLOT@0";
+  pmUnitB.pmUnitName() = "B";
+  pmUnitB.sensors() = {createPmSensor("B_BASE", "/run/devmap/sensors/B_BASE")};
+  VersionedPmSensor b1, b2, b3;
+  b1.productProductionState() = 0;
+  b1.sensors() = {createPmSensor("B_COMMON", "/run/devmap/sensors/B_COMMON")};
+  b2.productProductionState() = 1;
+  b2.sensors() = {
+      createPmSensor("B_COMMON", "/run/devmap/sensors/B_COMMON"),
+      createPmSensor("B_EXTRA", "/run/devmap/sensors/B_EXTRA")};
+  b3.productProductionState() = 2;
+  b3.sensors() = {createPmSensor("B_COMMON", "/run/devmap/sensors/B_COMMON")};
+  pmUnitB.versionedSensors() = {b1, b2, b3};
+
+  config.pmUnitSensorsList() = {pmUnitA, pmUnitB};
+  AsicCommand asicCommand;
+  asicCommand.sensorName() = "ASIC_CMD";
+  asicCommand.cmd() = "echo 0";
+  config.asicCommand() = asicCommand;
+
+  const std::unordered_set<std::string> expected = {
+      "A_BASE", "A_SHARED", "B_BASE", "B_COMMON", "ASIC_CMD"};
+  EXPECT_EQ(ConfigValidator().getAllUniversalSensorNames(config), expected);
 }
 
 TEST(ConfigValidatorTest, ValidPowerConfigComplexScenario) {
@@ -654,19 +775,18 @@ TEST(ConfigValidatorTest, InvalidTemperatureConfigEmptySensorList) {
   EXPECT_FALSE(ConfigValidator().isValid(config));
 }
 
-TEST(ConfigValidatorTest, InvalidTemperatureConfigWithVersionedSensors) {
+TEST(ConfigValidatorTest, TemperatureConfigVersionedSensorReferenceRules) {
+  // temperatureSensorNames follows the inputVoltageSensors contract: a
+  // versioned sensor is referenceable iff it's in every non-empty entry.
   SensorConfig config;
   config.platformName() = "TEST_PLATFORM";
   PmUnitSensors pmUnitSensors;
   pmUnitSensors.slotPath() = "/BCB_SLOT@0";
   pmUnitSensors.pmUnitName() = "BCB";
-
-  // Add base sensor
   pmUnitSensors.sensors() = {
       createPmSensor("BASE_TEMP", "/run/devmap/sensors/BASE_TEMP"),
       createPmSensor("POWER_SENSOR", "/run/devmap/sensors/POWER")};
 
-  // Add versioned sensor
   VersionedPmSensor versionedPmSensor;
   versionedPmSensor.sensors() = {
       createPmSensor("VERSIONED_TEMP", "/run/devmap/sensors/VERSIONED_TEMP")};
@@ -679,19 +799,30 @@ TEST(ConfigValidatorTest, InvalidTemperatureConfigWithVersionedSensors) {
       0.0,
       {"POWER_SENSOR"});
 
-  // Test 1: Valid config with base sensor
+  // Base sensor — accepted.
   config.temperatureConfigs() = {
       createTemperatureConfig("ASIC", {"BASE_TEMP"})};
   EXPECT_TRUE(ConfigValidator().isValid(config));
 
-  // Test 2: Invalid config with versioned sensor
+  // Versioned sensor in the only entry — accepted.
   config.temperatureConfigs() = {
       createTemperatureConfig("ASIC", {"VERSIONED_TEMP"})};
-  EXPECT_FALSE(ConfigValidator().isValid(config));
+  EXPECT_TRUE(ConfigValidator().isValid(config));
 
-  // Test 3: Invalid config with mix of base and versioned sensors
+  // Mix of base and versioned — accepted.
   config.temperatureConfigs() = {
       createTemperatureConfig("ASIC", {"BASE_TEMP", "VERSIONED_TEMP"})};
+  EXPECT_TRUE(ConfigValidator().isValid(config));
+
+  // Add a second entry that lacks VERSIONED_TEMP — reference now rejected.
+  VersionedPmSensor otherVersionedPmSensor;
+  otherVersionedPmSensor.productProductionState() = 1;
+  otherVersionedPmSensor.sensors() = {
+      createPmSensor("OTHER_TEMP", "/run/devmap/sensors/OTHER_TEMP")};
+  config.pmUnitSensorsList()->at(0).versionedSensors() = {
+      versionedPmSensor, otherVersionedPmSensor};
+  config.temperatureConfigs() = {
+      createTemperatureConfig("ASIC", {"VERSIONED_TEMP"})};
   EXPECT_FALSE(ConfigValidator().isValid(config));
 }
 

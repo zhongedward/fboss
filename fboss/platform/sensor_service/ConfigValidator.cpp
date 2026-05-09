@@ -221,8 +221,8 @@ bool ConfigValidator::isValidPowerConfig(
     }
   }
 
-  // Validate inputVoltageSensors
-  // inputVoltageSensors is mandatory and must not be empty
+  // inputVoltageSensors is mandatory; each name must be a universally
+  // available sensor.
   if (powerConfig.inputVoltageSensors()->empty()) {
     XLOG(ERR) << "inputVoltageSensors must be defined and non-empty";
     return false;
@@ -290,7 +290,7 @@ bool ConfigValidator::isValidTemperatureConfig(
       return false;
     }
 
-    // Validate that all temperature sensor names exist
+    // Each temperatureSensorName must be a universally available sensor.
     for (const auto& sensorName : *tempConfig.temperatureSensorNames()) {
       if (universalSensorNames.count(sensorName) == 0) {
         XLOG(ERR) << fmt::format(
@@ -347,11 +347,9 @@ std::unordered_set<std::string> ConfigValidator::getAllSensorNames(
     const sensor_config::SensorConfig& sensorConfig) {
   std::unordered_set<std::string> sensorNames;
   for (const auto& pmUnitSensors : *sensorConfig.pmUnitSensorsList()) {
-    // Add base sensors
     for (const auto& pmSensor : *pmUnitSensors.sensors()) {
       sensorNames.emplace(*pmSensor.name());
     }
-    // Add versioned sensors
     for (const auto& versionedPmSensor : *pmUnitSensors.versionedSensors()) {
       for (const auto& pmSensor : *versionedPmSensor.sensors()) {
         sensorNames.emplace(*pmSensor.name());
@@ -371,6 +369,26 @@ std::unordered_set<std::string> ConfigValidator::getAllUniversalSensorNames(
     for (const auto& pmSensor : *pmUnitSensors.sensors()) {
       sensorNames.emplace(*pmSensor.name());
     }
+    // Per-PmUnit intersection: include only names present in every
+    // versionedSensors entry, so resolution can never miss them.
+    const auto& versioned = *pmUnitSensors.versionedSensors();
+    if (versioned.empty()) {
+      continue;
+    }
+    std::unordered_set<std::string> intersection;
+    for (const auto& pmSensor : *versioned.front().sensors()) {
+      intersection.emplace(*pmSensor.name());
+    }
+    for (size_t i = 1; i < versioned.size() && !intersection.empty(); ++i) {
+      std::unordered_set<std::string> next;
+      for (const auto& pmSensor : *versioned[i].sensors()) {
+        if (intersection.count(*pmSensor.name())) {
+          next.emplace(*pmSensor.name());
+        }
+      }
+      intersection = std::move(next);
+    }
+    sensorNames.insert(intersection.begin(), intersection.end());
   }
   if (const auto& asicCmd = sensorConfig.asicCommand()) {
     sensorNames.emplace(*asicCmd->sensorName());

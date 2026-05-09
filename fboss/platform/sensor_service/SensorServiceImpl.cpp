@@ -162,7 +162,7 @@ void SensorServiceImpl::fetchSensorData() {
     if (pmUnitInfo && pmUnitInfo->version() && versionedPmSensors) {
       XLOG(INFO) << fmt::format(
           "Processing {} PMUnit (v{}.{}.{}). "
-          "Using VersionedPmSensor v{}.{}.{}: {} sensors",
+          "Using VersionedPmSensor v{}.{}.{} (productName: {}): {} sensors",
           *pmUnitSensors.pmUnitName(),
           *pmUnitInfo->version()->productProductionState(),
           *pmUnitInfo->version()->productVersion(),
@@ -170,14 +170,16 @@ void SensorServiceImpl::fetchSensorData() {
           *versionedPmSensors->productProductionState(),
           *versionedPmSensors->productVersion(),
           *versionedPmSensors->productSubVersion(),
+          versionedPmSensors->productName().value_or("UNSET"),
           pmSensors.size());
     } else if (versionedPmSensors) {
       XLOG(INFO) << fmt::format(
-          "Processing {} PMUnit. Using VersionedSensor v{}.{}.{}: {} sensors",
+          "Processing {} PMUnit. Using VersionedSensor v{}.{}.{} (productName: {}): {} sensors",
           *pmUnitSensors.pmUnitName(),
           *versionedPmSensors->productProductionState(),
           *versionedPmSensors->productVersion(),
           *versionedPmSensors->productSubVersion(),
+          versionedPmSensors->productName().value_or("UNSET"),
           pmSensors.size());
     } else {
       XLOG(INFO) << fmt::format(
