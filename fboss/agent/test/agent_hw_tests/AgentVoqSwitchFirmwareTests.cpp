@@ -335,10 +335,12 @@ class AgentVoqSwitchIsolationFirmwareWBEventsTest
     isColdBoot = this->getAgentEnsemble() &&
         this->getSw()->getBootType() == BootType::COLD_BOOT;
     if (isColdBoot) {
-      // We use just the first FW capable switch index for asserting for
-      // counter.
-      fwCapableSwitchIndex =
-          *this->getFWCapableSwitchIndices(this->getSw()->getConfig()).begin();
+      auto switchId = this->getCurrentSwitchIdForTesting();
+      auto config = this->getSw()->getConfig();
+      auto it = config.switchSettings()->switchIdToSwitchInfo()->find(
+          static_cast<int64_t>(switchId));
+      CHECK(it != config.switchSettings()->switchIdToSwitchInfo()->end());
+      fwCapableSwitchIndex = *it->second.switchIndex();
     }
     if (isColdBoot) {
       WITH_RETRIES({
