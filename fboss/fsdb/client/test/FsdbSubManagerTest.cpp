@@ -276,6 +276,13 @@ class FsdbSubManagerTest : public ::testing::Test,
     return false;
   }
 
+  size_t numActivePublishers() {
+    if (fsdbTestServer_) {
+      return fsdbTestServer_->serviceHandler().getActivePublishers().size();
+    }
+    return 0;
+  }
+
   TestAgentPublisher& testPublisher() {
     return *testPublisher_;
   }
@@ -726,6 +733,97 @@ TYPED_TEST(FsdbSubManagerHbTest, verifyHeartbeatCb) {
   // Verify heartbeat callback continues to be called
   numHeartbeats = 0;
   WITH_RETRIES_N(100, { EXPECT_EVENTUALLY_GT(numHeartbeats, 0); });
+}
+
+TYPED_TEST(FsdbSubManagerHbTest, verifyPublisherRestartWithGR) {
+  // Use a longer GR hold time so the stale state timer (which starts at
+  // subscriber creation) doesn't fire before heartbeats arrive, even when
+  // server setup takes a few seconds.
+  int grHoldTime = 10;
+  int numHeartbeatsBeforePublisherConnect = 1;
+  int numHeartbeatsAfterPublisherDisconnect = 3;
+  int numHeartbeats = 0;
+
+  // Step 0: Create subscription before publisher is connected
+  std::optional<SubscriptionState> lastStateSeen;
+  SubscriptionOptions options =
+      this->getSubscriptionOptions("test", grHoldTime);
+  options.requireInitialSyncToMarkConnect_ = true;
+  auto subscriber = this->createSubscriber(options, this->root().agent());
+  auto boundData = subscriber->subscribeBound(
+      [&](auto, auto newState, std::optional<bool> initialSyncHasData) {
+        XLOG(INFO) << "DBG: SubscriptionState: "
+                   << subscriptionStateToString(newState)
+                   << " initialSyncHasData: "
+                   << (initialSyncHasData.has_value() ? "true" : "false");
+        lastStateSeen = newState;
+      },
+      [&](std::optional<OperMetadata> /*md*/) {
+        numHeartbeats++;
+        XLOG(INFO) << "DBG: numHeartbeats: " << numHeartbeats;
+      });
+
+  // Step 1: Verify that before publisher connect, heartbeats are received
+  // but SubscriptionState does not transition yet to CONNECTED.
+  WITH_RETRIES_N(30, {
+    ASSERT_EVENTUALLY_GE(numHeartbeats, numHeartbeatsBeforePublisherConnect);
+  });
+  // The subscription must NOT be in CONNECTED state yet (requireInitialSync
+  // prevents CONNECTED without initial data). Other states (e.g.
+  // DISCONNECTED_GR_HOLD_EXPIRED) are allowed if the stale timer happened to
+  // fire concurrently.
+  ASSERT_FALSE(
+      lastStateSeen.has_value() &&
+      lastStateSeen.value() == SubscriptionState::CONNECTED);
+
+  // Step 2: Connect publisher and publish initial data.
+  // Note: the state change to CONNECTED fires before the data callback
+  // (see FsdbPatchSubscriber.cpp serveStream), so we must wait separately
+  // for boundData to be populated after seeing CONNECTED.
+  auto data1 = this->data1("foo");
+  this->connectPublisherAndPublish(this->path1(), data1);
+  WITH_RETRIES(
+      ASSERT_EVENTUALLY_EQ(lastStateSeen, SubscriptionState::CONNECTED));
+  WITH_RETRIES({
+    auto data = *boundData.rlock();
+    ASSERT_EVENTUALLY_NE(data, nullptr);
+    if (data) {
+      ASSERT_EVENTUALLY_EQ(this->fetchData1(data->toThrift()), data1);
+    }
+  });
+
+  // Step 2: Disconnect publisher, verify DISCONNECTED_GR_HOLD state
+  this->testPublisher().disconnect();
+  WITH_RETRIES(ASSERT_EVENTUALLY_EQ(this->numActivePublishers(), 0));
+  WITH_RETRIES(ASSERT_EVENTUALLY_EQ(
+      lastStateSeen, SubscriptionState::DISCONNECTED_GR_HOLD));
+
+  // Step 3: Verify that subscriber is receiving heartbeats from connected
+  // FSDB server
+  int heartbeatsBefore = numHeartbeats;
+  WITH_RETRIES_N(30, {
+    ASSERT_EVENTUALLY_GE(
+        numHeartbeats,
+        heartbeatsBefore + numHeartbeatsAfterPublisherDisconnect);
+  });
+
+  // Step 4: Verify subscription eventually goes to DISCONNECTED_GR_HOLD_EXPIRED
+  WITH_RETRIES(ASSERT_EVENTUALLY_EQ(
+      lastStateSeen, SubscriptionState::DISCONNECTED_GR_HOLD_EXPIRED));
+
+  // Step 5: Connect publisher and verify subscription is CONNECTED
+  auto data2 = this->data1("foo");
+  this->connectPublisherAndPublish(this->path1(), data2);
+  WITH_RETRIES(
+      ASSERT_EVENTUALLY_EQ(lastStateSeen, SubscriptionState::CONNECTED));
+  // Same as Step 2: state change fires before data callback, so retry.
+  WITH_RETRIES({
+    auto data = *boundData.rlock();
+    ASSERT_EVENTUALLY_NE(data, nullptr);
+    if (data) {
+      ASSERT_EVENTUALLY_EQ(this->fetchData1(data->toThrift()), data2);
+    }
+  });
 }
 
 } // namespace facebook::fboss::fsdb::test
