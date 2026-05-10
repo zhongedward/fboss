@@ -4,6 +4,7 @@
 #include <folly/Conv.h>
 #include <folly/IPAddressV6.h>
 
+#include <array>
 #include <memory>
 
 #include "fboss/agent/AddressUtil.h"
@@ -27,6 +28,20 @@ const facebook::fboss::Label kTopLabel{1101};
 } // namespace
 
 namespace facebook::fboss {
+
+enum class MplsPacketInjectionType {
+  FrontPanel,
+  Cpu,
+};
+
+const char* name(MplsPacketInjectionType injectionType) {
+  switch (injectionType) {
+    case MplsPacketInjectionType::FrontPanel:
+      return "front-panel";
+    case MplsPacketInjectionType::Cpu:
+      return "cpu";
+  }
+}
 
 class AgentMPLSMidpointTest : public AgentHwTest {
  protected:
@@ -112,16 +127,28 @@ class AgentMPLSMidpointTest : public AgentHwTest {
         [sw = getSw()](uint32_t size) { return sw->allocatePacket(size); });
   }
 
-  void sendMplsIngressPacket() {
-    getAgentEnsemble()->ensureSendPacketOutOfPort(
-        makeMplsIngressPacket(), ingressPort());
+  void sendMplsIngressPacket(MplsPacketInjectionType injectionType) {
+    auto pkt = makeMplsIngressPacket();
+    switch (injectionType) {
+      case MplsPacketInjectionType::FrontPanel:
+        EXPECT_TRUE(
+            getAgentEnsemble()->ensureSendPacketOutOfPort(
+                std::move(pkt), ingressPort()));
+        break;
+      case MplsPacketInjectionType::Cpu:
+        EXPECT_TRUE(
+            getAgentEnsemble()->ensureSendPacketSwitched(std::move(pkt)));
+        break;
+    }
   }
 
-  void verifyMplsPushForwarding() {
+  void verifyMplsPushForwarding(MplsPacketInjectionType injectionType) {
+    SCOPED_TRACE(folly::to<std::string>("injectionType=", name(injectionType)));
+
     auto outPktsBefore =
         utility::getPortOutPkts(getLatestPortStats(egressPort()));
 
-    sendMplsIngressPacket();
+    sendMplsIngressPacket(injectionType);
 
     WITH_RETRIES({
       auto outPktsAfter =
@@ -139,7 +166,15 @@ TEST_F(AgentMPLSMidpointTest, StaticMplsRoutePush) {
     resolveNextHop();
   };
 
-  auto verify = [this]() { verifyMplsPushForwarding(); };
+  auto verify = [this]() {
+    constexpr std::array kInjectionTypes{
+        MplsPacketInjectionType::FrontPanel,
+        MplsPacketInjectionType::Cpu,
+    };
+    for (auto injectionType : kInjectionTypes) {
+      verifyMplsPushForwarding(injectionType);
+    }
+  };
 
   verifyAcrossWarmBoots(setup, verify);
 }
