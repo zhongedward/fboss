@@ -15,6 +15,7 @@
 #include <gtest/gtest.h>
 #include <thrift/lib/cpp2/op/Get.h>
 
+#include <chrono>
 #include <utility>
 
 FOLLY_INIT_LOGGING_CONFIG("fboss=DBG5; default:async=true");
@@ -647,6 +648,425 @@ TYPED_TEST(FsdbSubManagerTest, restartPublisher) {
   this->connectPublisherAndPublish(this->path1(), data1);
   WITH_RETRIES(ASSERT_EVENTUALLY_EQ(
                    this->fetchData1((*boundData.rlock())->toThrift()), data1););
+}
+
+TYPED_TEST(FsdbSubManagerTest, reconnectTriggersDisconnectAndReconnect) {
+  auto data1 = this->data1("foo");
+  this->connectPublisherAndPublish(this->path1(), data1);
+  std::optional<SubscriptionState> lastStateSeen;
+  // Record every transition the SubscriptionStateChangeCb receives so we can
+  // assert the CONNECTED -> DISCONNECTED -> CONNECTED sequence is delivered,
+  // not just that the final state is CONNECTED.
+  folly::Synchronized<std::vector<SubscriptionState>> stateChanges;
+  auto subscriber = this->createSubscriber(
+      this->getSubscriptionOptions("test"), this->root().agent());
+  auto boundData = subscriber->subscribeBound(
+      [&](auto, auto newState, std::optional<bool> /*initialSyncHasData*/) {
+        lastStateSeen = newState;
+        stateChanges.wlock()->push_back(newState);
+      });
+
+  WITH_RETRIES({
+    ASSERT_EVENTUALLY_TRUE(this->isSubscribed("test"));
+    ASSERT_EVENTUALLY_EQ(lastStateSeen, SubscriptionState::CONNECTED);
+  });
+  // Snapshot the size of the transition log right before the reconnect so we
+  // can scan only the post-reconnect tail for the CONNECTED -> DISCONNECTED
+  // -> CONNECTED sequence.
+  size_t preReconnectChanges = stateChanges.rlock()->size();
+
+  subscriber->reconnect();
+
+  // Wait for the full transition sequence to land in the callback log.
+  WITH_RETRIES({
+    auto changes = stateChanges.rlock();
+    ASSERT_EVENTUALLY_GE(changes->size(), preReconnectChanges + 2);
+    ASSERT_EVENTUALLY_EQ(changes->back(), SubscriptionState::CONNECTED);
+  });
+  // The exact transitions delivered to the SubscriptionStateChangeCb after
+  // reconnect must be DISCONNECTED followed by CONNECTED.
+  {
+    auto changes = stateChanges.rlock();
+    std::vector<SubscriptionState> postReconnect(
+        changes->begin() + preReconnectChanges, changes->end());
+    EXPECT_EQ(postReconnect.front(), SubscriptionState::DISCONNECTED);
+    EXPECT_EQ(postReconnect.back(), SubscriptionState::CONNECTED);
+  }
+  // And a fresh publish after the reconnect is delivered (the subscription
+  // is functionally restored, not just its state).
+  auto data1New = this->data1("bar");
+  this->testPublisher().publish(this->path1(), data1New);
+  WITH_RETRIES(EXPECT_EVENTUALLY_EQ(
+      this->fetchData1((*boundData.rlock())->toThrift()), data1New));
+}
+
+TYPED_TEST(FsdbSubManagerTest, reconnectValidationWithGR) {
+  auto data1 = this->data1("foo");
+  this->connectPublisherAndPublish(this->path1(), data1);
+  std::optional<SubscriptionState> lastStateSeen;
+  // Record every transition the SubscriptionStateChangeCb receives so we can
+  // assert the CONNECTED -> DISCONNECTED_GR_HOLD -> CONNECTED sequence is
+  // delivered, not just that the final state is CONNECTED.
+  folly::Synchronized<std::vector<SubscriptionState>> stateChanges;
+  auto subscriber = this->createSubscriber(
+      this->getSubscriptionOptions("test", 5), this->root().agent());
+  auto boundData = subscriber->subscribeBound(
+      [&](auto, auto newState, std::optional<bool> /*initialSyncHasData*/) {
+        lastStateSeen = newState;
+        stateChanges.wlock()->push_back(newState);
+      });
+
+  WITH_RETRIES({
+    ASSERT_EVENTUALLY_TRUE(this->isSubscribed("test"));
+    ASSERT_EVENTUALLY_EQ(lastStateSeen, SubscriptionState::CONNECTED);
+  });
+  // Snapshot the size of the transition log right before the reconnect so we
+  // can scan only the post-reconnect tail for the CONNECTED ->
+  // DISCONNECTED_GR_HOLD -> CONNECTED sequence.
+  size_t preReconnectChanges = stateChanges.rlock()->size();
+
+  subscriber->reconnect();
+
+  // Wait for the full transition sequence to land in the callback log.
+  WITH_RETRIES({
+    auto changes = stateChanges.rlock();
+    ASSERT_EVENTUALLY_GE(changes->size(), preReconnectChanges + 2);
+    ASSERT_EVENTUALLY_EQ(changes->back(), SubscriptionState::CONNECTED);
+  });
+  // The exact transitions delivered to the SubscriptionStateChangeCb after
+  // reconnect must be DISCONNECTED_GR_HOLD followed by CONNECTED.
+  {
+    auto changes = stateChanges.rlock();
+    std::vector<SubscriptionState> postReconnect(
+        changes->begin() + preReconnectChanges, changes->end());
+    EXPECT_EQ(postReconnect.front(), SubscriptionState::DISCONNECTED_GR_HOLD);
+    EXPECT_EQ(postReconnect.back(), SubscriptionState::CONNECTED);
+  }
+  // And a fresh publish after the reconnect is delivered (the subscription
+  // is functionally restored, not just its state).
+  auto data1New = this->data1("bar");
+  this->testPublisher().publish(this->path1(), data1New);
+  WITH_RETRIES(EXPECT_EVENTUALLY_EQ(
+      this->fetchData1((*boundData.rlock())->toThrift()), data1New));
+}
+
+TYPED_TEST(FsdbSubManagerTest, reconnectAfterStopIsNoop) {
+  auto subscriber = this->createSubscriber(
+      this->getSubscriptionOptions("test"), this->root().agent());
+  auto boundData = subscriber->subscribeBound();
+  WITH_RETRIES(EXPECT_EVENTUALLY_TRUE(this->isSubscribed("test")));
+  subscriber->stop();
+  WITH_RETRIES(EXPECT_EVENTUALLY_FALSE(this->isSubscribed("test")));
+  // After stop(), the underlying subscriber is destroyed and getInfo() has
+  // no value to report. Capture this baseline before invoking reconnect().
+  EXPECT_FALSE(subscriber->getInfo().has_value());
+
+  // Should be safe to call after stop -- no crash, no-op.
+  subscriber->reconnect();
+
+  // Verify reconnect was a true no-op: no resubscription happened and the
+  // subscriber remains in its post-stop state.
+  EXPECT_FALSE(subscriber->getInfo().has_value());
+  EXPECT_FALSE(this->isSubscribed("test"));
+}
+
+TYPED_TEST(FsdbSubManagerTest, reconnectOnExtendedSubscriber) {
+  auto data1 = this->data1("foo");
+  this->connectPublisherAndPublish(this->path1(), data1);
+  std::optional<SubscriptionState> lastStateSeen;
+  bool sawDisconnected = false;
+  auto subscriber = this->createExtendedSubscriber(
+      this->getSubscriptionOptions("test"), this->extSubscriptionPaths());
+  auto boundData = subscriber->subscribeBound(
+      [&](auto, auto newState, std::optional<bool> /*initialSyncHasData*/) {
+        lastStateSeen = newState;
+        if (newState == SubscriptionState::DISCONNECTED) {
+          sawDisconnected = true;
+        }
+      });
+
+  WITH_RETRIES({
+    ASSERT_EVENTUALLY_TRUE(this->isSubscribed("test"));
+    ASSERT_EVENTUALLY_EQ(lastStateSeen, SubscriptionState::CONNECTED);
+  });
+
+  subscriber->reconnect();
+
+  WITH_RETRIES({ ASSERT_EVENTUALLY_TRUE(sawDisconnected); });
+  WITH_RETRIES(
+      { ASSERT_EVENTUALLY_EQ(lastStateSeen, SubscriptionState::CONNECTED); });
+}
+
+TYPED_TEST(FsdbSubManagerTest, reconnectInvalidateGRSkipsGRHold) {
+  auto data1 = this->data1("foo");
+  this->connectPublisherAndPublish(this->path1(), data1);
+  folly::Synchronized<std::vector<SubscriptionState>> stateChanges;
+  std::optional<SubscriptionState> lastStateSeen;
+  auto subscriber = this->createSubscriber(
+      this->getSubscriptionOptions("test", 5), this->root().agent());
+  auto boundData = subscriber->subscribeBound(
+      [&](auto, auto newState, std::optional<bool> /*initialSyncHasData*/) {
+        lastStateSeen = newState;
+        stateChanges.wlock()->push_back(newState);
+      });
+
+  WITH_RETRIES({
+    ASSERT_EVENTUALLY_TRUE(this->isSubscribed("test"));
+    ASSERT_EVENTUALLY_EQ(lastStateSeen, SubscriptionState::CONNECTED);
+  });
+  size_t preReconnectChanges = stateChanges.rlock()->size();
+
+  auto reconnectStart = std::chrono::steady_clock::now();
+  subscriber->reconnect(true);
+
+  // Wait for the post-reconnect transitions to land in the callback log.
+  WITH_RETRIES({
+    auto changes = stateChanges.rlock();
+    ASSERT_EVENTUALLY_GE(changes->size(), preReconnectChanges + 2);
+    ASSERT_EVENTUALLY_EQ(changes->back(), SubscriptionState::CONNECTED);
+  });
+  // The first post-reconnect transition must be DISCONNECTED_GR_HOLD_EXPIRED
+  // (NOT DISCONNECTED_GR_HOLD), proving GR hold was skipped entirely.
+  std::chrono::steady_clock::time_point grHoldExpiredAt;
+  {
+    auto changes = stateChanges.rlock();
+    std::vector<SubscriptionState> postReconnect(
+        changes->begin() + preReconnectChanges, changes->end());
+    EXPECT_EQ(
+        postReconnect.front(), SubscriptionState::DISCONNECTED_GR_HOLD_EXPIRED);
+    EXPECT_EQ(postReconnect.back(), SubscriptionState::CONNECTED);
+    grHoldExpiredAt = std::chrono::steady_clock::now();
+  }
+  // Sanity: the expired transition landed well before the 5s GR hold would
+  // have elapsed, proving we did not just wait it out.
+  auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+      grHoldExpiredAt - reconnectStart);
+  EXPECT_LT(elapsed.count(), 5);
+}
+
+TYPED_TEST(FsdbSubManagerTest, reconnectInvalidateGRWhileInGRHold) {
+  auto data1 = this->data1("foo");
+  this->connectPublisherAndPublish(this->path1(), data1);
+  folly::Synchronized<std::vector<SubscriptionState>> stateChanges;
+  std::optional<SubscriptionState> lastStateSeen;
+  // grHoldTimer=30 so the natural GR expiry will not race with the test.
+  auto subscriber = this->createSubscriber(
+      this->getSubscriptionOptions("test", 30), this->root().agent());
+  auto boundData = subscriber->subscribeBound(
+      [&](auto, auto newState, std::optional<bool> /*initialSyncHasData*/) {
+        lastStateSeen = newState;
+        stateChanges.wlock()->push_back(newState);
+      });
+
+  WITH_RETRIES({
+    ASSERT_EVENTUALLY_TRUE(this->isSubscribed("test"));
+    ASSERT_EVENTUALLY_EQ(lastStateSeen, SubscriptionState::CONNECTED);
+  });
+
+  // Drop the publisher to land the subscription in DISCONNECTED_GR_HOLD.
+  this->testPublisher().disconnect();
+  WITH_RETRIES(ASSERT_EVENTUALLY_EQ(
+      lastStateSeen, SubscriptionState::DISCONNECTED_GR_HOLD));
+
+  // Now invalidate GR -- subscription should immediately transition to
+  // DISCONNECTED_GR_HOLD_EXPIRED via the override's "already in GR_HOLD" path,
+  // not by waiting out the 30s timer.
+  auto invalidateStart = std::chrono::steady_clock::now();
+  subscriber->reconnect(true);
+  WITH_RETRIES(ASSERT_EVENTUALLY_EQ(
+      lastStateSeen, SubscriptionState::DISCONNECTED_GR_HOLD_EXPIRED));
+  auto invalidateElapsed = std::chrono::duration_cast<std::chrono::seconds>(
+      std::chrono::steady_clock::now() - invalidateStart);
+  EXPECT_LT(invalidateElapsed.count(), 30);
+
+  // Bring publisher back; subscription returns to CONNECTED.
+  this->connectPublisherAndPublish(this->path1(), data1);
+  WITH_RETRIES(
+      ASSERT_EVENTUALLY_EQ(lastStateSeen, SubscriptionState::CONNECTED));
+}
+
+TYPED_TEST(FsdbSubManagerTest, reconnectInvalidateGRFlagDoesNotLeak) {
+  auto data1 = this->data1("foo");
+  this->connectPublisherAndPublish(this->path1(), data1);
+  folly::Synchronized<std::vector<SubscriptionState>> stateChanges;
+  std::optional<SubscriptionState> lastStateSeen;
+  auto subscriber = this->createSubscriber(
+      this->getSubscriptionOptions("test", 5), this->root().agent());
+  auto boundData = subscriber->subscribeBound(
+      [&](auto, auto newState, std::optional<bool> /*initialSyncHasData*/) {
+        lastStateSeen = newState;
+        stateChanges.wlock()->push_back(newState);
+      });
+
+  WITH_RETRIES({
+    ASSERT_EVENTUALLY_TRUE(this->isSubscribed("test"));
+    ASSERT_EVENTUALLY_EQ(lastStateSeen, SubscriptionState::CONNECTED);
+  });
+
+  // Round 1: reconnect(noGR=true) -- consumes the flag. Wait for
+  // the full DISCONNECTED_GR_HOLD_EXPIRED -> CONNECTED cycle to land in the
+  // transition log (lastStateSeen is racy because the brief GR_HOLD_EXPIRED
+  // value is overwritten by CONNECTED before the retry loop wakes up).
+  size_t round1Snapshot = stateChanges.rlock()->size();
+  subscriber->reconnect(true);
+  WITH_RETRIES({
+    auto changes = stateChanges.rlock();
+    ASSERT_EVENTUALLY_GE(changes->size(), round1Snapshot + 2);
+    ASSERT_EVENTUALLY_EQ(changes->back(), SubscriptionState::CONNECTED);
+  });
+  {
+    auto changes = stateChanges.rlock();
+    std::vector<SubscriptionState> round1(
+        changes->begin() + round1Snapshot, changes->end());
+    EXPECT_EQ(round1.front(), SubscriptionState::DISCONNECTED_GR_HOLD_EXPIRED);
+  }
+
+  // Round 2: an UNRELATED publisher disconnect must follow the normal GR
+  // path (DISCONNECTED_GR_HOLD), proving the flag was consumed and did not
+  // leak into a subsequent unrelated flap.
+  size_t round2Snapshot = stateChanges.rlock()->size();
+  this->testPublisher().disconnect();
+  WITH_RETRIES({
+    auto changes = stateChanges.rlock();
+    ASSERT_EVENTUALLY_GT(changes->size(), round2Snapshot);
+    ASSERT_EVENTUALLY_EQ(
+        (*changes)[round2Snapshot], SubscriptionState::DISCONNECTED_GR_HOLD);
+  });
+}
+
+TYPED_TEST(
+    FsdbSubManagerTest,
+    reconnectInvalidateGRWhileInGRHoldExpiredDoesNotLeak) {
+  // Bug regression: reconnect(noGR=true) called while subscription is
+  // in DISCONNECTED_GR_HOLD_EXPIRED must not leak forceGRExpired_=true. There
+  // is no upcoming CONNECTED->DISCONNECTED transition for the flag to be
+  // consumed against, so without the fix the stale flag survives until the
+  // next legitimate disconnect (after the publisher recovers) and incorrectly
+  // skips GR hold then.
+  auto data1 = this->data1("foo");
+  this->connectPublisherAndPublish(this->path1(), data1);
+  folly::Synchronized<std::vector<SubscriptionState>> stateChanges;
+  std::optional<SubscriptionState> lastStateSeen;
+  // Short GR timer so we can wait it out quickly within the test.
+  auto subscriber = this->createSubscriber(
+      this->getSubscriptionOptions("test", 2), this->root().agent());
+  auto boundData = subscriber->subscribeBound(
+      [&](auto, auto newState, std::optional<bool> /*initialSyncHasData*/) {
+        lastStateSeen = newState;
+        stateChanges.wlock()->push_back(newState);
+      });
+
+  WITH_RETRIES({
+    ASSERT_EVENTUALLY_TRUE(this->isSubscribed("test"));
+    ASSERT_EVENTUALLY_EQ(lastStateSeen, SubscriptionState::CONNECTED);
+  });
+
+  // Drop publisher and let the GR timer expire naturally so the subscription
+  // settles in DISCONNECTED_GR_HOLD_EXPIRED -- the state in which the bug
+  // would set forceGRExpired_ with no consumer to clear it.
+  this->testPublisher().disconnect();
+  WITH_RETRIES(ASSERT_EVENTUALLY_EQ(
+      lastStateSeen, SubscriptionState::DISCONNECTED_GR_HOLD_EXPIRED));
+
+  // Trigger reconnect(noGR=true) while in GR_HOLD_EXPIRED. Pre-fix
+  // this leaks forceGRExpired_=true; with the fix it is a no-op because no
+  // upcoming CONNECTED->DISCONNECTED edge will consume it.
+  subscriber->reconnect(true);
+
+  // Bring publisher back; subscription returns to CONNECTED.
+  this->connectPublisherAndPublish(this->path1(), data1);
+  WITH_RETRIES(
+      ASSERT_EVENTUALLY_EQ(lastStateSeen, SubscriptionState::CONNECTED));
+
+  // An UNRELATED publisher disconnect that follows MUST traverse the normal
+  // GR path (DISCONNECTED_GR_HOLD), NOT skip to DISCONNECTED_GR_HOLD_EXPIRED.
+  // With the buggy code the stale forceGRExpired_ is consumed here and this
+  // assertion fires. With the fix the first post-flap transition is GR_HOLD.
+  size_t snapshot = stateChanges.rlock()->size();
+  this->testPublisher().disconnect();
+  WITH_RETRIES({
+    auto changes = stateChanges.rlock();
+    ASSERT_EVENTUALLY_GT(changes->size(), snapshot);
+    EXPECT_EQ((*changes)[snapshot], SubscriptionState::DISCONNECTED_GR_HOLD);
+  });
+}
+
+TYPED_TEST(FsdbSubManagerTest, reconnectInvalidateGRWithoutGRHoldIsNoop) {
+  auto data1 = this->data1("foo");
+  this->connectPublisherAndPublish(this->path1(), data1);
+  folly::Synchronized<std::vector<SubscriptionState>> stateChanges;
+  std::optional<SubscriptionState> lastStateSeen;
+  // grHoldTimer=0 -- noGR should be a no-op (default disconnect path).
+  auto subscriber = this->createSubscriber(
+      this->getSubscriptionOptions("test"), this->root().agent());
+  auto boundData = subscriber->subscribeBound(
+      [&](auto, auto newState, std::optional<bool> /*initialSyncHasData*/) {
+        lastStateSeen = newState;
+        stateChanges.wlock()->push_back(newState);
+      });
+
+  WITH_RETRIES({
+    ASSERT_EVENTUALLY_TRUE(this->isSubscribed("test"));
+    ASSERT_EVENTUALLY_EQ(lastStateSeen, SubscriptionState::CONNECTED);
+  });
+  size_t preReconnectChanges = stateChanges.rlock()->size();
+
+  subscriber->reconnect(true);
+
+  WITH_RETRIES({
+    auto changes = stateChanges.rlock();
+    ASSERT_EVENTUALLY_GE(changes->size(), preReconnectChanges + 2);
+    ASSERT_EVENTUALLY_EQ(changes->back(), SubscriptionState::CONNECTED);
+  });
+  // First post-reconnect transition must be plain DISCONNECTED, not
+  // DISCONNECTED_GR_HOLD_EXPIRED -- proves noGR is a no-op when
+  // grHoldTimeSec_ == 0.
+  auto changes = stateChanges.rlock();
+  std::vector<SubscriptionState> postReconnect(
+      changes->begin() + preReconnectChanges, changes->end());
+  EXPECT_EQ(postReconnect.front(), SubscriptionState::DISCONNECTED);
+  EXPECT_EQ(postReconnect.back(), SubscriptionState::CONNECTED);
+}
+
+TYPED_TEST(FsdbSubManagerTest, reconnectInvalidateGROnExtendedSubscriber) {
+  auto data1 = this->data1("foo");
+  this->connectPublisherAndPublish(this->path1(), data1);
+  folly::Synchronized<std::vector<SubscriptionState>> stateChanges;
+  std::optional<SubscriptionState> lastStateSeen;
+  // Use createSubscriber to set grHoldTimer, then convert to extended by
+  // adding an extended path before subscribing. createExtendedSubscriber
+  // uses createSubscriber("...") which defaults grHoldTimer=0, so we build
+  // it manually here to get GR.
+  auto subscriber =
+      this->createSubscriber(this->getSubscriptionOptions("test", 5));
+  for (auto& path : this->extSubscriptionPaths()) {
+    subscriber->addExtendedPath(std::move(path));
+  }
+  auto boundData = subscriber->subscribeBound(
+      [&](auto, auto newState, std::optional<bool> /*initialSyncHasData*/) {
+        lastStateSeen = newState;
+        stateChanges.wlock()->push_back(newState);
+      });
+
+  WITH_RETRIES({
+    ASSERT_EVENTUALLY_TRUE(this->isSubscribed("test"));
+    ASSERT_EVENTUALLY_EQ(lastStateSeen, SubscriptionState::CONNECTED);
+  });
+  size_t preReconnectChanges = stateChanges.rlock()->size();
+
+  subscriber->reconnect(true);
+
+  WITH_RETRIES({
+    auto changes = stateChanges.rlock();
+    ASSERT_EVENTUALLY_GE(changes->size(), preReconnectChanges + 2);
+    ASSERT_EVENTUALLY_EQ(changes->back(), SubscriptionState::CONNECTED);
+  });
+  auto changes = stateChanges.rlock();
+  std::vector<SubscriptionState> postReconnect(
+      changes->begin() + preReconnectChanges, changes->end());
+  EXPECT_EQ(
+      postReconnect.front(), SubscriptionState::DISCONNECTED_GR_HOLD_EXPIRED);
+  EXPECT_EQ(postReconnect.back(), SubscriptionState::CONNECTED);
 }
 
 TYPED_TEST(FsdbSubManagerTest, verifyGR) {
