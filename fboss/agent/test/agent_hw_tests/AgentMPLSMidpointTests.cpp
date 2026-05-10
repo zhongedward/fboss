@@ -45,6 +45,11 @@ enum class MplsPacketInjectionType {
   Cpu,
 };
 
+enum class MplsTrapPacketMechanism {
+  SrcPortAcl,
+  TtlExpiry,
+};
+
 const char* name(MplsPayloadIpVersion ipVersion) {
   switch (ipVersion) {
     case MplsPayloadIpVersion::V4:
@@ -60,6 +65,15 @@ const char* name(MplsPacketInjectionType injectionType) {
       return "front-panel";
     case MplsPacketInjectionType::Cpu:
       return "cpu";
+  }
+}
+
+const char* name(MplsTrapPacketMechanism mechanism) {
+  switch (mechanism) {
+    case MplsTrapPacketMechanism::SrcPortAcl:
+      return "src-port-acl";
+    case MplsTrapPacketMechanism::TtlExpiry:
+      return "ttl-expiry";
   }
 }
 
@@ -105,6 +119,13 @@ class AgentMPLSMidpointTest : public AgentHwTest {
 
   PortID ingressPort() const {
     return masterLogicalInterfacePortIds()[1];
+  }
+
+  MplsTrapPacketMechanism trapPacketMechanism() const {
+    auto asic = checkSameAndGetAsicForTesting(getAgentEnsemble()->getL3Asics());
+    return asic->isSupported(HwAsic::Feature::SAI_ACL_ENTRY_SRC_PORT_QUALIFIER)
+        ? MplsTrapPacketMechanism::SrcPortAcl
+        : MplsTrapPacketMechanism::TtlExpiry;
   }
 
   std::unique_ptr<EcmpSetupHelper> setupECMPHelper() const {
