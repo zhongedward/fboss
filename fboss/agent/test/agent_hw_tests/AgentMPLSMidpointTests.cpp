@@ -2,6 +2,7 @@
 
 #include <boost/container/flat_set.hpp>
 #include <folly/Conv.h>
+#include <folly/IPAddressV4.h>
 #include <folly/IPAddressV6.h>
 
 #include <array>
@@ -29,10 +30,24 @@ const facebook::fboss::Label kTopLabel{1101};
 
 namespace facebook::fboss {
 
+enum class MplsPayloadIpVersion {
+  V4,
+  V6,
+};
+
 enum class MplsPacketInjectionType {
   FrontPanel,
   Cpu,
 };
+
+const char* name(MplsPayloadIpVersion ipVersion) {
+  switch (ipVersion) {
+    case MplsPayloadIpVersion::V4:
+      return "IPv4";
+    case MplsPayloadIpVersion::V6:
+      return "IPv6";
+  }
+}
 
 const char* name(MplsPacketInjectionType injectionType) {
   switch (injectionType) {
@@ -108,27 +123,46 @@ class AgentMPLSMidpointTest : public AgentHwTest {
         "resolve midpoint MPLS nexthop");
   }
 
-  std::unique_ptr<TxPacket> makeMplsIngressPacket() const {
+  std::unique_ptr<TxPacket> makeMplsIngressPacket(
+      MplsPayloadIpVersion ipVersion) const {
     auto vlan = getVlanIDForTx();
     CHECK(vlan.has_value());
 
-    auto frame = utility::getEthFrame(
-        utility::kLocalCpuMac(),
-        utility::kLocalCpuMac(),
-        {MPLSHdr::Label{
-            static_cast<uint32_t>(kTopLabel.value()), 0, true, 128}},
-        folly::IPAddressV6{"1001::1"},
-        folly::IPAddressV6{"2001::1"},
-        10000,
-        20000,
-        *vlan);
-
-    return frame.getTxPacket(
-        [sw = getSw()](uint32_t size) { return sw->allocatePacket(size); });
+    MPLSHdr::Label mplsLabel{
+        static_cast<uint32_t>(kTopLabel.value()), 0, true, 128};
+    std::unique_ptr<TxPacket> pkt;
+    if (ipVersion == MplsPayloadIpVersion::V4) {
+      auto frame = utility::getEthFrame(
+          utility::kLocalCpuMac(),
+          utility::kLocalCpuMac(),
+          {mplsLabel},
+          folly::IPAddressV4{"100.1.1.1"},
+          folly::IPAddressV4{"200.1.1.1"},
+          10000,
+          20000,
+          *vlan);
+      pkt = frame.getTxPacket(
+          [sw = getSw()](uint32_t size) { return sw->allocatePacket(size); });
+    } else {
+      auto frame = utility::getEthFrame(
+          utility::kLocalCpuMac(),
+          utility::kLocalCpuMac(),
+          {mplsLabel},
+          folly::IPAddressV6{"1001::1"},
+          folly::IPAddressV6{"2001::1"},
+          10000,
+          20000,
+          *vlan);
+      pkt = frame.getTxPacket(
+          [sw = getSw()](uint32_t size) { return sw->allocatePacket(size); });
+    }
+    return pkt;
   }
 
-  void sendMplsIngressPacket(MplsPacketInjectionType injectionType) {
-    auto pkt = makeMplsIngressPacket();
+  void sendMplsIngressPacket(
+      MplsPayloadIpVersion ipVersion,
+      MplsPacketInjectionType injectionType) {
+    auto pkt = makeMplsIngressPacket(ipVersion);
     switch (injectionType) {
       case MplsPacketInjectionType::FrontPanel:
         EXPECT_TRUE(
@@ -142,13 +176,20 @@ class AgentMPLSMidpointTest : public AgentHwTest {
     }
   }
 
-  void verifyMplsPushForwarding(MplsPacketInjectionType injectionType) {
-    SCOPED_TRACE(folly::to<std::string>("injectionType=", name(injectionType)));
+  void verifyMplsPushForwarding(
+      MplsPayloadIpVersion ipVersion,
+      MplsPacketInjectionType injectionType) {
+    SCOPED_TRACE(
+        folly::to<std::string>(
+            "ipVersion=",
+            name(ipVersion),
+            " injectionType=",
+            name(injectionType)));
 
     auto outPktsBefore =
         utility::getPortOutPkts(getLatestPortStats(egressPort()));
 
-    sendMplsIngressPacket(injectionType);
+    sendMplsIngressPacket(ipVersion, injectionType);
 
     WITH_RETRIES({
       auto outPktsAfter =
@@ -167,12 +208,18 @@ TEST_F(AgentMPLSMidpointTest, StaticMplsRoutePush) {
   };
 
   auto verify = [this]() {
+    constexpr std::array kIpVersions{
+        MplsPayloadIpVersion::V4,
+        MplsPayloadIpVersion::V6,
+    };
     constexpr std::array kInjectionTypes{
         MplsPacketInjectionType::FrontPanel,
         MplsPacketInjectionType::Cpu,
     };
-    for (auto injectionType : kInjectionTypes) {
-      verifyMplsPushForwarding(injectionType);
+    for (auto ipVersion : kIpVersions) {
+      for (auto injectionType : kInjectionTypes) {
+        verifyMplsPushForwarding(ipVersion, injectionType);
+      }
     }
   };
 
