@@ -2297,12 +2297,18 @@ TEST_F(NdpTest, PortFlapRecover) {
   EXPECT_TRUE(neigbor2Pending.wait());
 
   ndpTable = sw->getState()->getInterfaces()->getNodeIf(intfID)->getNdpTable();
+  entry = ndpTable->getEntryIf(targetIP);
   entry2 = ndpTable->getEntryIf(targetIP2);
   entry3 = ndpTable->getEntryIf(targetIP3);
+  EXPECT_NE(entry, nullptr);
+  EXPECT_EQ(entry->isPending(), true);
+  EXPECT_EQ(entry->getPort(), PortDescriptor(PortID(0)));
   EXPECT_NE(entry2, nullptr);
   EXPECT_EQ(entry2->isPending(), true);
+  EXPECT_EQ(entry2->getPort(), PortDescriptor(PortID(0)));
   EXPECT_NE(entry3, nullptr);
   EXPECT_EQ(entry3->isPending(), true);
+  EXPECT_EQ(entry3->getPort(), PortDescriptor(PortID(0)));
 
   // send a port up event to the switch for port 1
   EXPECT_STATE_UPDATE_TIMES_ATLEAST(sw, 1);
