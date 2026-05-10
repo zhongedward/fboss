@@ -2300,6 +2300,9 @@ void SwSwitch::handlePacket(std::unique_ptr<RxPacket> pkt) {
   if (!intfIdOpt) {
     XLOG_EVERY_N(ERR, 10000)
         << "No interface for port " << pkt->getSrcPort() << ", dropping pkt";
+    if (FLAGS_observe_rx_packets_without_interface && isFullyInitialized()) {
+      pktObservers_->packetReceived(pkt.get());
+    }
     portStats(pkt)->pktDropped();
     return;
   }
