@@ -3793,7 +3793,8 @@ void SaiSwitch::initSwitchAsicSdkHealthNotificationLocked(
 
 bool SaiSwitch::isMissingSrcPortAllowed(HostifTrapSaiId hostifTrapSaiId) {
   static std::set<facebook::fboss::cfg::PacketRxReason> kAllowedRxReasons = {
-      facebook::fboss::cfg::PacketRxReason::TTL_1};
+      facebook::fboss::cfg::PacketRxReason::TTL_1,
+      facebook::fboss::cfg::PacketRxReason::MPLS_TTL_1};
   const auto hostifTrapItr =
       concurrentIndices_->hostifTrapIds.find(hostifTrapSaiId);
   if (hostifTrapItr == concurrentIndices_->hostifTrapIds.cend()) {
