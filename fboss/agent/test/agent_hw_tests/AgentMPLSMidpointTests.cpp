@@ -7,6 +7,7 @@
 
 #include <array>
 #include <memory>
+#include <type_traits>
 
 #include "fboss/agent/AddressUtil.h"
 #include "fboss/agent/TxPacket.h"
@@ -17,6 +18,7 @@
 #include "fboss/agent/test/AgentHwTest.h"
 #include "fboss/agent/test/EcmpSetupHelper.h"
 #include "fboss/agent/test/TestUtils.h"
+#include "fboss/agent/test/TrunkUtils.h"
 #include "fboss/agent/test/utils/PortStatsTestUtils.h"
 #include "fboss/agent/types.h"
 
@@ -25,6 +27,9 @@
 namespace {
 
 const facebook::fboss::Label kTopLabel{1101};
+
+using MplsMidpointPortTypes =
+    ::testing::Types<facebook::fboss::PortID, facebook::fboss::AggregatePortID>;
 
 } // namespace
 
@@ -58,26 +63,44 @@ const char* name(MplsPacketInjectionType injectionType) {
   }
 }
 
+template <typename PortType>
 class AgentMPLSMidpointTest : public AgentHwTest {
  protected:
+  static constexpr bool kIsTrunk = std::is_same_v<PortType, AggregatePortID>;
   using EcmpSetupHelper =
       utility::MplsEcmpSetupTargetedPorts<folly::IPAddressV6>;
 
   cfg::SwitchConfig initialConfig(
       const AgentEnsemble& ensemble) const override {
-    return utility::onePortPerInterfaceConfig(
+    auto config = utility::onePortPerInterfaceConfig(
         ensemble.getSw(),
         ensemble.masterLogicalPortIds(),
         true /* interfaceHasSubnet */);
+
+    if constexpr (kIsTrunk) {
+      utility::addAggPort(1, {ensemble.masterLogicalPortIds()[0]}, &config);
+    }
+
+    return config;
   }
 
   std::vector<ProductionFeature> getProductionFeaturesVerified()
       const override {
+    if constexpr (kIsTrunk) {
+      return {ProductionFeature::MPLS_MIDPOINT, ProductionFeature::LAG};
+    }
     return {ProductionFeature::MPLS_MIDPOINT};
   }
 
   PortID egressPort() const {
     return masterLogicalInterfacePortIds()[0];
+  }
+
+  PortDescriptor egressPortDescriptor() const {
+    if constexpr (kIsTrunk) {
+      return PortDescriptor(AggregatePortID(1));
+    }
+    return PortDescriptor(egressPort());
   }
 
   PortID ingressPort() const {
@@ -98,7 +121,7 @@ class AgentMPLSMidpointTest : public AgentHwTest {
     route.ingressLabel() = kTopLabel.value();
 
     auto helper = setupECMPHelper();
-    auto nhop = helper->nhop(PortDescriptor(egressPort()));
+    auto nhop = helper->nhop(egressPortDescriptor());
 
     NextHopThrift nextHop;
     nextHop.address() = network::toBinaryAddress(nhop.ip);
@@ -118,9 +141,20 @@ class AgentMPLSMidpointTest : public AgentHwTest {
           return helper.resolveNextHops(
               state,
               boost::container::flat_set<PortDescriptor>{
-                  PortDescriptor(egressPort())});
+                  egressPortDescriptor()});
         },
         "resolve midpoint MPLS nexthop");
+  }
+
+  void applyConfigAndEnableTrunks(const cfg::SwitchConfig& config) {
+    applyNewConfig(config);
+    if constexpr (kIsTrunk) {
+      applyNewState(
+          [](const std::shared_ptr<SwitchState>& state) {
+            return utility::enableTrunkPorts(state);
+          },
+          "enable trunk ports");
+    }
   }
 
   std::unique_ptr<TxPacket> makeMplsIngressPacket(
@@ -199,12 +233,14 @@ class AgentMPLSMidpointTest : public AgentHwTest {
   }
 };
 
-TEST_F(AgentMPLSMidpointTest, StaticMplsRoutePush) {
+TYPED_TEST_SUITE(AgentMPLSMidpointTest, MplsMidpointPortTypes);
+
+TYPED_TEST(AgentMPLSMidpointTest, StaticMplsRoutePush) {
   auto setup = [this]() {
-    auto config = initialConfig(*getAgentEnsemble());
-    configureStaticMplsPushRoute(config);
-    applyNewConfig(config);
-    resolveNextHop();
+    auto config = this->initialConfig(*this->getAgentEnsemble());
+    this->configureStaticMplsPushRoute(config);
+    this->applyConfigAndEnableTrunks(config);
+    this->resolveNextHop();
   };
 
   auto verify = [this]() {
@@ -218,12 +254,12 @@ TEST_F(AgentMPLSMidpointTest, StaticMplsRoutePush) {
     };
     for (auto ipVersion : kIpVersions) {
       for (auto injectionType : kInjectionTypes) {
-        verifyMplsPushForwarding(ipVersion, injectionType);
+        this->verifyMplsPushForwarding(ipVersion, injectionType);
       }
     }
   };
 
-  verifyAcrossWarmBoots(setup, verify);
+  this->verifyAcrossWarmBoots(setup, verify);
 }
 
 } // namespace facebook::fboss
