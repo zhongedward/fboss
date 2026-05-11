@@ -341,6 +341,12 @@ class AgentMPLSMidpointTest : public AgentHwTest {
     configureTrapPacketMechanism(config, mechanism);
     applyConfigAndEnableTrunks(config);
 
+    // TTL-expiry fallback traps the post-PUSH packet on its second pass:
+    // - The first pass imposes the pushed label and egresses to a loopback
+    // port.
+    // - The looped packet uses the router MAC so it gets routed again.
+    // - The second pass matches the pushed-label SWAP route and expires TTL.
+    // - The MPLS TTL trap sends the packet to CPU for raw snooper inspection.
     resolveNextHopForPortWithMac(egressPortDescriptor(), routerMac());
     if (mechanism == MplsTrapPacketMechanism::TtlExpiry) {
       resolveNextHopForPort(
