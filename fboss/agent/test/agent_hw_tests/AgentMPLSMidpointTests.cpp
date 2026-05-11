@@ -33,7 +33,8 @@
 namespace {
 
 const facebook::fboss::Label kTopLabel{1101};
-const facebook::fboss::LabelForwardingAction::LabelStack kPushedLabelStack{101};
+const facebook::fboss::LabelForwardingAction::LabelStack
+    kSinglePushedLabelStack{101};
 const facebook::fboss::LabelForwardingAction::Label kSwapLabel{201};
 constexpr auto kGetQueueOutPktsRetryTimes = 5;
 
@@ -159,9 +160,10 @@ class AgentMPLSMidpointTest : public AgentHwTest {
         actionType);
   }
 
-  Label pushedTopLabel() const {
-    CHECK(!kPushedLabelStack.empty());
-    return kPushedLabelStack.back();
+  Label pushedTopLabel(
+      const LabelForwardingAction::LabelStack& pushStack) const {
+    CHECK(!pushStack.empty());
+    return pushStack.back();
   }
 
   folly::MacAddress routerMac() const {
@@ -188,13 +190,14 @@ class AgentMPLSMidpointTest : public AgentHwTest {
     route.nexthops()->push_back(nextHopThrift);
   }
 
-  void configureStaticMplsPushRoute(cfg::SwitchConfig& config) const {
+  void configureStaticMplsPushRoute(
+      cfg::SwitchConfig& config,
+      const LabelForwardingAction::LabelStack& pushStack) const {
     configureStaticMplsRoute(
         config,
         kTopLabel,
         LabelForwardingAction(
-            LabelForwardingAction::LabelForwardingType::PUSH,
-            kPushedLabelStack),
+            LabelForwardingAction::LabelForwardingType::PUSH, pushStack),
         egressPortDescriptor());
   }
 
@@ -213,7 +216,8 @@ class AgentMPLSMidpointTest : public AgentHwTest {
 
   void configureTrapPacketMechanism(
       cfg::SwitchConfig& config,
-      MplsTrapPacketMechanism mechanism) const {
+      MplsTrapPacketMechanism mechanism,
+      const LabelForwardingAction::LabelStack& pushStack) const {
     switch (mechanism) {
       case MplsTrapPacketMechanism::SrcPortAcl: {
         auto asic =
@@ -224,7 +228,7 @@ class AgentMPLSMidpointTest : public AgentHwTest {
       case MplsTrapPacketMechanism::TtlExpiry:
         configureStaticMplsSwapRoute(
             config,
-            pushedTopLabel(),
+            pushedTopLabel(pushStack),
             kSwapLabel,
             PortDescriptor(secondPassEgressPort()));
         break;
@@ -334,11 +338,12 @@ class AgentMPLSMidpointTest : public AgentHwTest {
     }
   }
 
-  void setupStaticMplsRoutePush() {
+  void setupStaticMplsRoutePush(
+      const LabelForwardingAction::LabelStack& pushStack) {
     auto mechanism = trapPacketMechanism();
     auto config = initialConfig(*getAgentEnsemble());
-    configureStaticMplsPushRoute(config);
-    configureTrapPacketMechanism(config, mechanism);
+    configureStaticMplsPushRoute(config, pushStack);
+    configureTrapPacketMechanism(config, mechanism, pushStack);
     applyConfigAndEnableTrunks(config);
 
     // TTL-expiry fallback traps the post-PUSH packet on its second pass:
@@ -351,14 +356,15 @@ class AgentMPLSMidpointTest : public AgentHwTest {
     if (mechanism == MplsTrapPacketMechanism::TtlExpiry) {
       resolveNextHopForPort(
           PortDescriptor(secondPassEgressPort()),
-          pushedTopLabel(),
+          pushedTopLabel(pushStack),
           LabelForwardingAction::LabelForwardingType::SWAP);
     }
   }
 
   void verifyMplsPushAndTrapPacket(
       MplsPayloadIpVersion ipVersion,
-      MplsPacketInjectionType injectionType) {
+      MplsPacketInjectionType injectionType,
+      const LabelForwardingAction::LabelStack& expectedPushStack) {
     auto mechanism = trapPacketMechanism();
     SCOPED_TRACE(
         folly::to<std::string>(
@@ -425,7 +431,7 @@ class AgentMPLSMidpointTest : public AgentHwTest {
     ASSERT_EQ(labelStack.size(), 1);
     EXPECT_EQ(
         labelStack[0].getLabelValue(),
-        static_cast<uint32_t>(pushedTopLabel().value()));
+        static_cast<uint32_t>(pushedTopLabel(expectedPushStack).value()));
     EXPECT_TRUE(labelStack[0].isbottomOfStack());
   }
 };
@@ -446,7 +452,9 @@ TYPED_TEST_SUITE(AgentMPLSMidpointTest, MplsMidpointPortTypes);
 // Note: the TTL-expiry fallback is needed because programming a simple "trap
 // MPLS packet to CPU" inSegEntry does not work and needs an SAI SDK fix.
 TYPED_TEST(AgentMPLSMidpointTest, StaticMplsRoutePush) {
-  auto setup = [this]() { this->setupStaticMplsRoutePush(); };
+  auto setup = [this]() {
+    this->setupStaticMplsRoutePush(kSinglePushedLabelStack);
+  };
 
   auto verify = [this]() {
     constexpr std::array kIpVersions{
@@ -459,7 +467,8 @@ TYPED_TEST(AgentMPLSMidpointTest, StaticMplsRoutePush) {
     };
     for (auto ipVersion : kIpVersions) {
       for (auto injectionType : kInjectionTypes) {
-        this->verifyMplsPushAndTrapPacket(ipVersion, injectionType);
+        this->verifyMplsPushAndTrapPacket(
+            ipVersion, injectionType, kSinglePushedLabelStack);
       }
     }
   };
