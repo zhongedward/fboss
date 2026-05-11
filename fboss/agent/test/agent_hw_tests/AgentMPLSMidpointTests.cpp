@@ -432,6 +432,19 @@ class AgentMPLSMidpointTest : public AgentHwTest {
 
 TYPED_TEST_SUITE(AgentMPLSMidpointTest, MplsMidpointPortTypes);
 
+// StaticMplsRoutePush verifies MPLS midpoint PUSH behavior across:
+// - IPv4 and IPv6 payloads carried inside the injected MPLS packet.
+// - Front-panel and CPU-switched injection paths.
+// - Physical-port and single-port LAG nexthops.
+// - First-pass egress forwarding to prove the route imposed labels.
+// - Trapped packet label-stack inspection:
+//   - If src-port ACL is supported, trap packets looped back from the egress
+//     port because those packets have already completed the PUSH pass.
+//   - Otherwise, use MPLS TTL expiry on the second pass: the looped packet
+//     routes again with router MAC, matches the pushed label, expires TTL, and
+//     reaches CPU through the MPLS TTL trap.
+// Note: the TTL-expiry fallback is needed because programming a simple "trap
+// MPLS packet to CPU" inSegEntry does not work and needs an SAI SDK fix.
 TYPED_TEST(AgentMPLSMidpointTest, StaticMplsRoutePush) {
   auto setup = [this]() { this->setupStaticMplsRoutePush(); };
 
