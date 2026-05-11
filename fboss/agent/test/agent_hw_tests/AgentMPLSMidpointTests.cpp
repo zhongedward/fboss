@@ -8,6 +8,7 @@
 #include <array>
 #include <memory>
 #include <type_traits>
+#include <utility>
 
 #include "fboss/agent/AddressUtil.h"
 #include "fboss/agent/TxPacket.h"
@@ -27,6 +28,8 @@
 namespace {
 
 const facebook::fboss::Label kTopLabel{1101};
+const facebook::fboss::LabelForwardingAction::LabelStack kPushedLabelStack{101};
+const facebook::fboss::LabelForwardingAction::Label kSwapLabel{201};
 
 using MplsMidpointPortTypes =
     ::testing::Types<facebook::fboss::PortID, facebook::fboss::AggregatePortID>;
@@ -121,6 +124,10 @@ class AgentMPLSMidpointTest : public AgentHwTest {
     return masterLogicalInterfacePortIds()[1];
   }
 
+  PortID secondPassEgressPort() const {
+    return masterLogicalInterfacePortIds()[2];
+  }
+
   MplsTrapPacketMechanism trapPacketMechanism() const {
     auto asic = checkSameAndGetAsicForTesting(getAgentEnsemble()->getL3Asics());
     return asic->isSupported(HwAsic::Feature::SAI_ACL_ENTRY_SRC_PORT_QUALIFIER)
@@ -128,43 +135,101 @@ class AgentMPLSMidpointTest : public AgentHwTest {
         : MplsTrapPacketMechanism::TtlExpiry;
   }
 
-  std::unique_ptr<EcmpSetupHelper> setupECMPHelper() const {
+  std::unique_ptr<EcmpSetupHelper> setupECMPHelper(
+      Label topLabel,
+      LabelForwardingAction::LabelForwardingType actionType) const {
     return std::make_unique<EcmpSetupHelper>(
         getProgrammedState(),
         getSw()->needL2EntryForNeighbor(),
+        topLabel,
+        actionType);
+  }
+
+  Label pushedTopLabel() const {
+    CHECK(!kPushedLabelStack.empty());
+    return kPushedLabelStack.back();
+  }
+
+  folly::MacAddress routerMac() const {
+    return getMacForFirstInterfaceWithPortsForTesting(getProgrammedState());
+  }
+
+  void configureStaticMplsRoute(
+      cfg::SwitchConfig& config,
+      Label ingressLabel,
+      const LabelForwardingAction& action,
+      PortDescriptor nextHop) const {
+    config.staticMplsRoutesWithNhops()->emplace_back();
+    auto& route = config.staticMplsRoutesWithNhops()->back();
+    route.ingressLabel() = ingressLabel.value();
+
+    auto helper = setupECMPHelper(ingressLabel, action.type());
+    auto nhop = helper->nhop(std::move(nextHop));
+
+    NextHopThrift nextHopThrift;
+    nextHopThrift.address() = network::toBinaryAddress(nhop.ip);
+    nextHopThrift.address()->ifName() =
+        folly::to<std::string>("fboss", nhop.intf);
+    nextHopThrift.mplsAction() = action.toThrift();
+    route.nexthops()->push_back(nextHopThrift);
+  }
+
+  void configureStaticMplsPushRoute(cfg::SwitchConfig& config) const {
+    configureStaticMplsRoute(
+        config,
+        kTopLabel,
+        LabelForwardingAction(
+            LabelForwardingAction::LabelForwardingType::PUSH,
+            kPushedLabelStack),
+        egressPortDescriptor());
+  }
+
+  void configureStaticMplsSwapRoute(
+      cfg::SwitchConfig& config,
+      Label ingressLabel,
+      LabelForwardingAction::Label swapLabel,
+      PortDescriptor nextHop) const {
+    configureStaticMplsRoute(
+        config,
+        ingressLabel,
+        LabelForwardingAction(
+            LabelForwardingAction::LabelForwardingType::SWAP, swapLabel),
+        std::move(nextHop));
+  }
+
+  void resolveNextHopForPort(
+      const PortDescriptor& nextHop,
+      Label topLabel,
+      LabelForwardingAction::LabelForwardingType actionType) {
+    applyNewState(
+        [this, nextHop, topLabel, actionType](
+            const std::shared_ptr<SwitchState>& state) {
+          auto helper = EcmpSetupHelper(
+              state, getSw()->needL2EntryForNeighbor(), topLabel, actionType);
+          return helper.resolveNextHops(
+              state, boost::container::flat_set<PortDescriptor>{nextHop});
+        },
+        "resolve midpoint MPLS nexthop");
+  }
+
+  void resolveNextHop() {
+    resolveNextHopForPort(
+        egressPortDescriptor(),
         kTopLabel,
         LabelForwardingAction::LabelForwardingType::PUSH);
   }
 
-  void configureStaticMplsPushRoute(cfg::SwitchConfig& config) const {
-    config.staticMplsRoutesWithNhops()->resize(1);
-    auto& route = config.staticMplsRoutesWithNhops()[0];
-    route.ingressLabel() = kTopLabel.value();
-
-    auto helper = setupECMPHelper();
-    auto nhop = helper->nhop(egressPortDescriptor());
-
-    NextHopThrift nextHop;
-    nextHop.address() = network::toBinaryAddress(nhop.ip);
-    nextHop.address()->ifName() = folly::to<std::string>("fboss", nhop.intf);
-    nextHop.mplsAction() = nhop.action.toThrift();
-    route.nexthops()->push_back(nextHop);
-  }
-
-  void resolveNextHop() {
+  void resolveNextHopForPortWithMac(
+      const PortDescriptor& nextHop,
+      folly::MacAddress nextHopMac) {
     applyNewState(
-        [this](const std::shared_ptr<SwitchState>& state) {
-          auto helper = EcmpSetupHelper(
-              state,
-              getSw()->needL2EntryForNeighbor(),
-              kTopLabel,
-              LabelForwardingAction::LabelForwardingType::PUSH);
+        [this, nextHop, nextHopMac](const std::shared_ptr<SwitchState>& state) {
+          utility::EcmpSetupTargetedPorts6 helper(
+              state, getSw()->needL2EntryForNeighbor(), nextHopMac);
           return helper.resolveNextHops(
-              state,
-              boost::container::flat_set<PortDescriptor>{
-                  egressPortDescriptor()});
+              state, boost::container::flat_set<PortDescriptor>{nextHop});
         },
-        "resolve midpoint MPLS nexthop");
+        "resolve midpoint MPLS nexthop with explicit MAC");
   }
 
   void applyConfigAndEnableTrunks(const cfg::SwitchConfig& config) {
