@@ -21,6 +21,7 @@
 #include "fboss/agent/test/TestUtils.h"
 #include "fboss/agent/test/TrunkUtils.h"
 #include "fboss/agent/test/utils/PortStatsTestUtils.h"
+#include "fboss/agent/test/utils/TrapPacketUtils.h"
 #include "fboss/agent/types.h"
 
 #include <gtest/gtest.h>
@@ -195,6 +196,26 @@ class AgentMPLSMidpointTest : public AgentHwTest {
         LabelForwardingAction(
             LabelForwardingAction::LabelForwardingType::SWAP, swapLabel),
         std::move(nextHop));
+  }
+
+  void configureTrapPacketMechanism(
+      cfg::SwitchConfig& config,
+      MplsTrapPacketMechanism mechanism) const {
+    switch (mechanism) {
+      case MplsTrapPacketMechanism::SrcPortAcl: {
+        auto asic =
+            checkSameAndGetAsicForTesting(getAgentEnsemble()->getL3Asics());
+        utility::addTrapPacketAcl(asic, &config, egressPort());
+        break;
+      }
+      case MplsTrapPacketMechanism::TtlExpiry:
+        configureStaticMplsSwapRoute(
+            config,
+            pushedTopLabel(),
+            kSwapLabel,
+            PortDescriptor(secondPassEgressPort()));
+        break;
+    }
   }
 
   void resolveNextHopForPort(
